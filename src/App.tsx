@@ -1,39 +1,40 @@
 import { useState } from 'react';
-import { client } from './lib/amplify';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { MenuUpload } from './components/MenuUpload';
+import { Recommendations } from './components/Recommendations';
+import { isNotAMenu, type MenuResponse } from './types/menu';
 
-// TEMPORARY smoke screen — replaced by the real UI in the next steps.
-// Its only job: prove the typed Amplify client can reach the deployed chat Lambda
-// from the browser.
 function App() {
-  const [reply, setReply] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  async function askCat(): Promise<void> {
-    setLoading(true);
-    setReply('');
-    try {
-      const messages = [{ role: 'user', text: 'hey! suggest one relaxing shisha vibe' }];
-      const res = await client.queries.chat({ messagesJson: JSON.stringify(messages) });
-      if (res.errors?.length) {
-        setReply(`Error: ${res.errors.map((e) => e.message).join('; ')}`);
-      } else {
-        setReply(res.data ?? '(no reply)');
-      }
-    } catch (err) {
-      setReply(`Error: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setLoading(false);
-    }
-  }
+  const [result, setResult] = useState<MenuResponse | null>(null);
 
   return (
-    <main style={{ maxWidth: 640, margin: '4rem auto', padding: '0 1rem', fontFamily: 'system-ui' }}>
-      <h1>Shisha Companion — backend smoke test</h1>
-      <button type="button" onClick={askCat} disabled={loading}>
-        {loading ? 'Thinking…' : 'Talk to the cat 🐾'}
-      </button>
-      {reply && <p style={{ marginTop: '1.5rem', lineHeight: 1.6 }}>{reply}</p>}
-    </main>
+    <div className="min-h-dvh bg-linen text-espresso">
+      <div className="mx-auto max-w-3xl px-6 py-16">
+        <header className="mb-10">
+          <h1 className="text-5xl font-semibold tracking-tight">Shisha Companion</h1>
+          <p className="mt-3 text-lg text-espresso-soft">
+            Snap a menu, get flavor picks, and hang out with your session buddy.
+          </p>
+        </header>
+
+        <ErrorBoundary>
+          <MenuUpload onResult={setResult} />
+
+          {result && (
+            <div className="mt-12">
+              {isNotAMenu(result) ? (
+                <p className="rounded-2xl border border-petal bg-cream p-6 leading-relaxed">
+                  Hmm, that doesn&apos;t look like a shisha menu to me. Try a photo of the
+                  flavor list? 🐾
+                </p>
+              ) : (
+                <Recommendations analysis={result} />
+              )}
+            </div>
+          )}
+        </ErrorBoundary>
+      </div>
+    </div>
   );
 }
 
