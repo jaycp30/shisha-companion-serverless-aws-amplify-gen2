@@ -1,0 +1,163 @@
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import {
+  ChatError,
+  sendChat,
+  type ChatMessage,
+  type ChatSessionContext,
+} from '../lib/chat';
+import type { MenuAnalysis } from '../types/menu';
+
+interface ChatDrawerProps {
+  open: boolean;
+  onClose: () => void;
+  /** The analyzed menu, if one exists — gives the cat something to talk about. */
+  menu: MenuAnalysis | null;
+  session: ChatSessionContext;
+  /** Lets the mascot switch to its 'talking' clip while a reply is in flight. */
+  onTalkingChange: (talking: boolean) => void;
+}
+
+/**
+ * On desktop this docks to the right edge full-height, and App shifts the content
+ * column left so you can keep scrolling your recommendations while you chat.
+ *
+ * On small screens it's a bottom sheet instead — a side-by-side split needs horizontal
+ * room that a phone simply doesn't have, so trying to force one there would just give
+ * you two unusable columns.
+ */
+export function ChatDrawer({
+  open,
+  onClose,
+  menu,
+  session,
+  onTalkingChange,
+}: ChatDrawerProps) {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+  const reduceMotion = useReducedMotion();
+
+  const endRef = useRef<HTMLDivElement>(null);
+
+  // Keep the newest message in view as the conversation grows.
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, sending]);
+
+  async function handleSubmit(event: FormEvent): Promise<void> {
+    event.preventDefault();
+
+    const text = input.trim();
+    if (!text || sending) return;
+
+    // Render the user's own message immediately. Waiting for the round-trip to see
+    // your own words makes an app feel broken.
+    const history: ChatMessage[] = [...messages, { role: 'user', text }];
+    setMessages(history);
+    setInput('');
+    setError('');
+    setSending(true);
+    onTalkingChange(true);
+
+    try {
+      const reply = await sendChat(history, menu, session);
+      setMessages([...history, { role: 'assistant', text: reply }]);
+    } catch (err) {
+      setError(
+        err instanceof ChatError
+          ? err.message
+          : "Can't reach the cat's brain right now — check your connection. 🐾",
+      );
+    } finally {
+      setSending(false);
+      onTalkingChange(false);
+    }
+  }
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.section
+          className="fixed inset-x-0 bottom-0 z-40 mx-auto flex max-h-[70dvh] w-full max-w-xl flex-col rounded-t-3xl border border-petal bg-cream/95 backdrop-blur-sm lg:inset-y-0 lg:left-auto lg:right-0 lg:mx-0 lg:h-dvh lg:max-h-none lg:w-[24rem] lg:max-w-none lg:rounded-none lg:rounded-l-3xl"
+          initial={reduceMotion ? false : { opacity: 0, y: 24 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={reduceMotion ? undefined : { opacity: 0, y: 24 }}
+          transition={{ type: 'spring', stiffness: 300, damping: 32 }}
+          aria-label="Chat with the cat"
+        >
+          <header className="flex items-center justify-between border-b border-petal px-5 py-3">
+            <h2 className="text-sm font-semibold">Chat with the cat 🐾</h2>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-full px-3 py-1 text-sm text-espresso-soft transition hover:bg-petal-soft"
+              aria-label="Close chat"
+            >
+              Close
+            </button>
+          </header>
+
+          <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
+            {messages.length === 0 && (
+              <p className="text-sm leading-relaxed text-espresso-soft">
+                {menu
+                  ? 'Ask me about your menu, the picks, or just hang out. 🐾'
+                  : 'Upload a menu and I can talk you through it — or just chat. 🐾'}
+              </p>
+            )}
+
+            {messages.map((message, index) => (
+              <div
+                key={`${message.role}-${index}`}
+                className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'}
+              >
+                <p
+                  className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+                    message.role === 'user'
+                      ? 'bg-petal text-espresso'
+                      : 'border border-petal bg-linen text-espresso'
+                  }`}
+                >
+                  {message.text}
+                </p>
+              </div>
+            ))}
+
+            {sending && (
+              <p className="text-sm text-espresso-soft" role="status">
+                the cat is thinking…
+              </p>
+            )}
+
+            {error && (
+              <p className="rounded-xl bg-petal-soft px-4 py-3 text-sm" role="alert">
+                {error}
+              </p>
+            )}
+
+            <div ref={endRef} />
+          </div>
+
+          <form onSubmit={handleSubmit} className="flex gap-2 border-t border-petal p-4">
+            <input
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              placeholder="Say something…"
+              aria-label="Message"
+              className="min-w-0 flex-1 rounded-full border border-petal bg-linen px-4 py-2.5 text-sm text-espresso outline-none placeholder:text-espresso-soft focus:border-espresso-soft"
+            />
+            <button
+              type="submit"
+              disabled={sending || input.trim() === ''}
+              className="rounded-full bg-petal px-5 py-2.5 text-sm font-medium text-espresso transition hover:brightness-95 disabled:opacity-50"
+            >
+              Send
+            </button>
+          </form>
+        </motion.section>
+      )}
+    </AnimatePresence>
+  );
+}

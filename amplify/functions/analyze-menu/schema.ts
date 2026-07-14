@@ -4,12 +4,23 @@ import { z } from 'zod';
 // runtime, so we cannot trust the shape of anything Bedrock returns — this is the
 // boundary check (zod here is the TypeScript equivalent of Python's pydantic).
 
-const pick = z.object({ name: z.string(), why: z.string() });
+// A pick carries a role label ("Best", "Safer", "Wildcard"...). The model returns 5-7.
+const pick = z.object({
+  label: z.string(),
+  name: z.string(),
+  why: z.string(),
+});
+
+// Things to skip have no role — just a name and a reason.
+const avoidItem = z.object({ name: z.string(), why: z.string() });
 
 const menuAnalysis = z.object({
   menu_items: z.array(z.string()).default([]),
-  picks: z.object({ best: pick, safer: pick, stronger: pick }),
-  avoid: z.array(z.object({ name: z.string(), why: z.string() })).default([]),
+  // min(1) rather than min(5): if the model returns four good picks for a tiny menu,
+  // that's a worse answer, not a broken one. Rejecting it would turn a mild quality
+  // dip into a hard error the user sees as a crash.
+  picks: z.array(pick).min(1).max(8),
+  avoid: z.array(avoidItem).default([]),
   mixes: z
     .array(z.object({ components: z.array(z.string()), why: z.string() }))
     .default([]),
@@ -26,8 +37,8 @@ const menuResponse = z.union([notAMenu, menuAnalysis]);
 
 export type MenuResponse = z.infer<typeof menuResponse>;
 
-// Parse + validate the raw model text. Throws if the shape is wrong so the
-// caller surfaces a real error instead of shipping garbage to the UI.
+// Parse + validate the raw model text. Throws if the shape is wrong so the caller
+// surfaces a real error instead of shipping garbage to the UI.
 export function parseMenuAnalysis(raw: string): MenuResponse {
   // Models occasionally wrap JSON in ```json fences despite instructions — strip them.
   const cleaned = raw

@@ -4,7 +4,15 @@
 // before returning, so the frontend does NOT re-validate every field — it only needs to
 // narrow the success / not-a-menu union.
 
+/** A recommendation, carrying its role: "Best", "Safer", "Wildcard", … */
 export interface FlavorPick {
+  label: string;
+  name: string;
+  why: string;
+}
+
+/** Something to skip. No role — just a name and a reason. */
+export interface AvoidItem {
   name: string;
   why: string;
 }
@@ -22,12 +30,9 @@ export interface DrinkPairing {
 
 export interface MenuAnalysis {
   menu_items: string[];
-  picks: {
-    best: FlavorPick;
-    safer: FlavorPick;
-    stronger: FlavorPick;
-  };
-  avoid: FlavorPick[];
+  /** 5-7 picks; the first three are always Best / Safer / Stronger. */
+  picks: FlavorPick[];
+  avoid: AvoidItem[];
   mixes: Mix[];
   drink_pairings: DrinkPairing[];
   session_notes: string;

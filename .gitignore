@@ -28,6 +28,11 @@ dist-ssr
 amplify_outputs*
 amplifyconfiguration*
 
+# Media assets are never committed. assets/raw/ is regenerable via
+# scripts/fetch-assets.sh; assets/dist/ is uploaded to the public S3 bucket by
+# scripts/sync-assets.sh. See ASSETS.md.
+assets/
+
 # OS files
 .DS_Store
 

@@ -4,6 +4,8 @@ import type { MenuResponse } from '../types/menu';
 
 interface MenuUploadProps {
   onResult: (result: MenuResponse) => void;
+  // Lets the parent react to progress — the mascot uses this to switch to 'thinking'.
+  onStageChange?: (stage: Stage | null) => void;
 }
 
 // Friendly status text for each step of the flow.
@@ -13,12 +15,18 @@ const STAGE_LABEL: Record<Stage, string> = {
   analyzing: 'Reading the menu… 🐾',
 };
 
-export function MenuUpload({ onResult }: MenuUploadProps) {
+export function MenuUpload({ onResult, onStageChange }: MenuUploadProps) {
   const [stage, setStage] = useState<Stage | null>(null);
   const [error, setError] = useState('');
   const [fileName, setFileName] = useState('');
 
   const busy = stage !== null;
+
+  // Keep local state and the parent notification in one place.
+  function updateStage(next: Stage | null): void {
+    setStage(next);
+    onStageChange?.(next);
+  }
 
   async function handleFile(event: ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = event.target.files?.[0];
@@ -28,9 +36,13 @@ export function MenuUpload({ onResult }: MenuUploadProps) {
     setError('');
 
     try {
-      const result = await analyzeMenuPhoto(file, { onStage: setStage });
+      const result = await analyzeMenuPhoto(file, { onStage: updateStage });
+      // Clear the stage BEFORE handing the result up, so the parent's "done" reaction
+      // (mascot -> happy) lands after the "busy" one (mascot -> idle) and wins.
+      updateStage(null);
       onResult(result);
     } catch (err) {
+      updateStage(null);
       // Deliberate errors carry a user-safe message. Anything else is almost always
       // a dropped connection — the AI lives in the cloud, so no network means no cat.
       setError(
@@ -39,7 +51,6 @@ export function MenuUpload({ onResult }: MenuUploadProps) {
           : "Can't reach the cat's brain right now — check your connection and try again. 🐾",
       );
     } finally {
-      setStage(null);
       // Let the same file be picked again after an error.
       event.target.value = '';
     }
