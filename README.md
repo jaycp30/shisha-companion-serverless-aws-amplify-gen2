@@ -71,86 +71,98 @@ Never run `pipeline-deploy` by hand — Amplify runs it for you during a build, 
    Claude Sonnet 4.6, or the backend deploys somewhere it cannot call the model.
 2. **Node 22+**.
 3. **A fork of this repo** on GitHub.
-4. **A fine-grained GitHub personal access token** (see below).
 
-### Creating the GitHub token
+### Connect the repo (Amplify console + GitHub App)
 
-CloudFormation **cannot** use the Amplify GitHub App (that OAuth handshake is
-console-only), so connecting a repo via IaC requires a token.
+There is no GitHub App to *create* — AWS publishes one called **"AWS Amplify"**. You
+install it and point it at one repo. That install can only be triggered from the Amplify
+console (see [why it isn't in IaC](#why-the-repo-connection-isnt-in-cloudformation)).
 
-GitHub → **Settings → Developer settings → Personal access tokens → Fine-grained
-tokens → Generate new token**:
+1. Open the Amplify console **in your backend's region**:
+   `https://ap-northeast-1.console.aws.amazon.com/amplify/create`
 
-- **Expiration:** set one (90 days). This token is stored in AWS — a credential that
-  never expires is a credential you can never stop worrying about.
-- **Repository access:** *Only select repositories* → your fork.
-- **Permissions → Repository:**
+   ⚠️ **Check the region selector.** The console defaults to `us-east-1`, which would
+   deploy the backend away from your Bedrock model access.
 
-  | Permission | Access | Why |
-  |---|---|---|
-  | Contents | **Read-only** | Clone the repo to build it |
-  | Metadata | **Read-only** | Mandatory; GitHub auto-adds it |
-  | Webhooks | **Read and write** | Create the webhook so `git push` triggers a build |
+2. Source provider → **GitHub** → **Next**. GitHub takes over:
+   - **Authorize AWS Amplify** (check you're signed in as the right GitHub account)
+   - **"Only select repositories"** → your fork → **Install & Authorize**
 
-- **Account permissions:** none.
+   The GitHub App is now installed. It's scoped to that one repo, stores **no token in
+   AWS**, and is revocable at GitHub → Settings → Applications → Installed GitHub Apps.
 
-> **Do not use a classic token.** A classic token with `repo` scope grants AWS
-> read/write to *every repository you own*. A fine-grained token is scoped to one repo
-> and revocable from GitHub.
+3. Back in AWS: pick the repo and the **`main`** branch → **Next**.
 
-### Deploy
+4. Amplify reads [`amplify.yml`](./amplify.yml). **Confirm you see BOTH a `backend` phase
+   and a `frontend` phase.** If only a frontend phase appears, it hasn't detected
+   `amplify/` — you'd deploy a UI with no API behind it.
 
-[`infra/cf_amplify-hosting.yaml`](./infra/cf_amplify-hosting.yaml) provisions the
-Amplify Hosting app, its branch, and the IAM role Amplify uses to deploy the backend.
+5. **Service role** → **Create and use a new service role**.
 
-Read the token into a shell variable — this keeps it out of your shell history and off
-disk (works in both `zsh` and `bash`):
+   ⚠️ This role gets **`AdministratorAccess-Amplify`**, the only AWS-managed policy for
+   the job, and it is near-administrator. That isn't carelessness — deploying this
+   backend genuinely requires creating Lambdas, AppSync APIs, S3 buckets *and IAM roles*.
+   The consequence is worth internalising: **anyone who can push to the connected branch
+   can make that role run arbitrary CloudFormation in your account.** Protect the branch.
 
-```bash
-printf "Paste GitHub PAT then press Enter: "; read -rs GH_TOKEN; echo
-echo "token length: ${#GH_TOKEN}"
+6. **Save and deploy.** ~10–15 minutes: it deploys the whole Gen 2 backend, *then*
+   builds the frontend. Every later push to `main` repeats both.
+
+### Why the repo connection isn't in CloudFormation
+
+This project deliberately has **no IaC for the Amplify app**, and the reason is worth
+knowing rather than assuming it was laziness.
+
+`AWS::Amplify::App` exposes exactly three repo-connection properties:
+
+```
+Repository      # the URL
+AccessToken     # a token
+OauthToken      # a token
 ```
 
-Then deploy, from the same terminal:
+There is **no property to reference an installed GitHub App**. So CloudFormation (and
+CDK, which just synthesizes to CloudFormation) can only connect a repo **with a token**.
+And Amplify's token path has a further trap: it accepts only **classic** PATs. A
+fine-grained token — the secure kind, scoped to one repo — fails at webhook creation:
 
-```bash
-aws cloudformation deploy \
-  --template-file infra/cf_amplify-hosting.yaml \
-  --stack-name shisha-companion-hosting \
-  --region ap-northeast-1 \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --parameter-overrides \
-      AppName=shisha-companion \
-      RepositoryUrl=https://github.com/YOUR-USER/YOUR-FORK \
-      GitHubAccessToken="$GH_TOKEN" \
-      BranchName=main
-unset GH_TOKEN
+```
+"Resource not accessible by personal access token"
+documentation_url: .../repos/webhooks#create-a-repository-webhook
+status: 403
 ```
 
-`CAPABILITY_NAMED_IAM` is required because the template creates a *named* IAM role.
-The `GitHubAccessToken` parameter is `NoEcho`, so CloudFormation masks it in the
-console, in stack events, and in `describe-stacks`.
+So the IaC route forces a **classic** `repo`-scope token, which grants AWS read/write to
+**every repository you own**, stored permanently (Amplify re-uses it to clone on every
+build, so it can't be short-lived). Combined with auto-build and that near-admin service
+role, a leaked token becomes a path into your AWS account.
 
-Get the live URL:
+**The automatability and the insecurity are the same property, inverted:** a token can be
+handed to a machine (so it's IaC-able) precisely *because* it's a bearer credential (so
+it's dangerous). The GitHub App can't be handed to a machine precisely *because* it
+isn't one.
 
-```bash
-aws cloudformation describe-stacks \
-  --stack-name shisha-companion-hosting \
-  --region ap-northeast-1 \
-  --query 'Stacks[0].Outputs' --output table
-```
+Note this is **partly an AWS gap, not a law of nature**. The one-time OAuth click is
+genuinely unavoidable — GitHub will never let a machine grant a machine access to your
+account. But *referencing* an existing connection from IaC is perfectly possible, and AWS
+does exactly that elsewhere: **CodeConnections** (`AWS::CodeStarConnections::Connection`)
+is created in CloudFormation, sits `PENDING` until a human approves it once, and then
+yields a durable ARN that CodePipeline consumes forever. Amplify simply isn't wired to
+it. Given the choice between click-ops and a permanent account-wide credential, the six
+clicks win.
 
-The branch is created with auto-build on, so the first build starts immediately and
-takes **~10–15 minutes** — it deploys the entire Gen 2 backend *before* building the
-frontend. Every subsequent `git push` to the branch does both again.
+### Other gotchas we hit
 
-### Prefer the console?
-
-Connecting the repo through the **Amplify console** installs the Amplify **GitHub App**
-instead, which is scoped per-repository and needs no stored token — a better security
-posture, at the cost of being click-ops rather than IaC. The CloudFormation route above
-exists so the deployment is reproducible and forkable; pick whichever tradeoff you
-prefer.
+- **`validate-template` does not validate ARNs.** It checks *syntax only*. A template
+  referencing a policy that doesn't exist validates perfectly, then fails at deploy. A
+  green validate is not a green deploy.
+- **`AmplifyBackendDeployFullAccess` does not exist.** The real policy is
+  `AdministratorAccess-Amplify`.
+- **`ROLLBACK_COMPLETE` is a dead end, not a retry state.** CloudFormation refuses to
+  *update* out of it — you must delete the stack and recreate.
+- **`read -p` is a bash-ism.** In `zsh` (the macOS default) `-p` means "read from a
+  coprocess" and errors with `read: -p: no coprocess`. Use
+  `printf "prompt"; read -rs VAR` — it works in both shells.
 
 ### Cost
 
