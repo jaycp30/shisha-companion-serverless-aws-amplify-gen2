@@ -47,15 +47,18 @@ export function StickyPicks({ picks, watchRef }: StickyPicksProps) {
     <AnimatePresence>
       {show && (
         <motion.aside
-          // top-1 clears the 4px scroll-progress bar.
-          className="fixed inset-x-0 top-1 z-40 px-4"
+          // top-1 clears the 4px scroll-progress bar. The wrapper spans the full viewport
+          // width but only the centered pill is visible — pointer-events-none on the
+          // wrapper (restored on the pill below) stops its invisible margins from eating
+          // clicks meant for the audio controls underneath at top-right.
+          className="pointer-events-none fixed inset-x-0 top-1 z-40 px-4"
           initial={reduceMotion ? false : { y: -64, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           exit={reduceMotion ? undefined : { y: -64, opacity: 0 }}
           transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
           aria-label="Your picks"
         >
-          <div className="mx-auto flex max-w-3xl flex-wrap items-baseline gap-x-6 gap-y-1 rounded-b-2xl border border-petal bg-cream/95 px-5 py-2.5 backdrop-blur-sm">
+          <div className="pointer-events-auto mx-auto flex max-w-3xl flex-wrap items-baseline gap-x-6 gap-y-1 rounded-b-2xl border border-petal bg-cream/95 px-5 py-2.5 backdrop-blur-sm">
             {headline.map((pick, index) => (
               <span key={pick.name} className="flex items-baseline gap-2 text-sm">
                 <span
