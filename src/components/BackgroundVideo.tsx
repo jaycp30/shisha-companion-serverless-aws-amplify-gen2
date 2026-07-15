@@ -12,9 +12,11 @@ const SCENE_FILTER: Record<Scene, string> = {
 
 interface BackgroundVideoProps {
   scene: Scene;
+  /** Zen mode: fade the readability wash away so the full warm video shows through. */
+  unwashed?: boolean;
 }
 
-export function BackgroundVideo({ scene }: BackgroundVideoProps) {
+export function BackgroundVideo({ scene, unwashed = false }: BackgroundVideoProps) {
   return (
     <div className="fixed inset-0 -z-10 overflow-hidden" aria-hidden="true">
       {/* key={scene} forces React to remount (and restart) the video on a scene swap. */}
@@ -30,8 +32,14 @@ export function BackgroundVideo({ scene }: BackgroundVideoProps) {
       />
 
       {/* A linen wash so cream cards and espresso text stay readable on top. Kept
-          deliberately light — the brief asks for warm and colourful, not a dark scrim. */}
-      <div className="absolute inset-0 bg-linen/70" />
+          deliberately light — the brief asks for warm and colourful, not a dark scrim.
+          In zen mode there are no cards to protect, so it fades out (in step with the
+          card fade in App) to reveal the video at full warmth. */}
+      <div
+        className={`absolute inset-0 bg-linen/70 transition-opacity duration-500 ${
+          unwashed ? 'opacity-0' : 'opacity-100'
+        }`}
+      />
     </div>
   );
 }

@@ -39,6 +39,10 @@ function App() {
   const [isTalking, setIsTalking] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [hudCollapsed, setHudCollapsed] = useState(false);
+  // Zen mode: fade the content column away so the animated lounge background can be
+  // enjoyed. The column stays mounted — an in-flight analysis or accumulated menu
+  // state must survive the fade — it just becomes invisible and unclickable.
+  const [zenMode, setZenMode] = useState(false);
 
   // The chat drives the HUD out of the way and brings it back — but the manual toggle
   // still works at any time, so opening the chat is a default, not a lock.
@@ -182,16 +186,33 @@ function App() {
   return (
     <div className="relative min-h-dvh text-espresso">
       <ScrollProgress />
-      <BackgroundVideo scene="lounge-hero" />
+      <BackgroundVideo scene="lounge-hero" unwashed={zenMode} />
       <AudioControls audio={audio} />
+
+      {/* Zen mode toggle — top-left, the one corner the other fixed controls left free
+          (audio top-right, HUD bottom-left, mascot bottom-right). */}
+      <button
+        type="button"
+        aria-pressed={zenMode}
+        aria-label={zenMode ? 'Leave zen mode' : 'Enter zen mode (hide the cards)'}
+        onClick={() => setZenMode((zen) => !zen)}
+        className={`fixed left-4 top-4 z-30 rounded-full border border-petal px-3 py-1.5 text-xs backdrop-blur-sm transition ${
+          zenMode
+            ? 'bg-espresso text-cream hover:brightness-110'
+            : 'bg-cream/95 text-espresso hover:bg-petal-soft'
+        }`}
+      >
+        {zenMode ? '🍃 Zen off' : '🍃 Zen'}
+      </button>
 
       {/* With the chat docked on the right (desktop only), the content slides left and
           narrows rather than hiding behind the panel — so you can keep reading and
           scrolling your recommendations while you talk to the cat. */}
       <div
-        className={`px-6 py-16 transition-all duration-300 ${
+        aria-hidden={zenMode}
+        className={`px-6 py-16 transition-all duration-500 ${
           chatOpen ? 'mx-auto max-w-3xl lg:mx-0 lg:ml-16 lg:max-w-2xl' : 'mx-auto max-w-3xl'
-        }`}
+        } ${zenMode ? 'pointer-events-none opacity-0' : 'opacity-100'}`}
       >
         <header className="mb-10">
           <h1 className="text-5xl font-semibold tracking-tight">Shisha Companion</h1>
