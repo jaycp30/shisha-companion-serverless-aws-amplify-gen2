@@ -12,9 +12,25 @@ import { env } from '$amplify/env/analyze-menu';
 import type { Schema } from '../../data/resource';
 import { SYSTEM_PROMPT } from './prompt';
 import { parseMenuAnalysis, type MenuResponse } from './schema';
+import { checkRateLimit } from '../rate-limit';
 
 const bedrock = new BedrockRuntimeClient();
 const s3 = new S3Client();
+
+// Cap paid vision analyses per session. Uploads are infrequent (a user scans one
+// menu, maybe a few pages), so 10 per 10 minutes is generous for real use while
+// stopping a runaway or looping client. NOTE: sessionId is client-generated, so a
+// determined attacker can rotate it to bypass this — it is best-effort defense in
+// depth on top of the account's Bedrock budget alarms, which are the real backstop.
+// (The stream worker has no HTTP context, so an IP key is not available here.)
+const MENU_RATE_LIMIT = 10;
+const MENU_RATE_WINDOW_SECONDS = 600;
+
+// Keys look like `menu/<sessionId>/<file>`; pull the session segment out to key the
+// rate limit. Falls back to a shared bucket for any unexpected shape.
+function sessionIdFromKey(s3Key: string | undefined): string {
+  return s3Key?.split('/')[1] || 'unknown';
+}
 
 // Data client, so the worker can write results back onto the job row. Configured from
 // env values injected by the schema-level `allow.resource(analyzeMenu)` grant.
@@ -127,6 +143,26 @@ async function processJob(id: string): Promise<void> {
     const keys = (job.s3Keys ?? []).filter(
       (key): key is string => typeof key === 'string',
     );
+
+    // Throttle per session before the (paid) vision call. Fail-open by design.
+    const { allowed } = await checkRateLimit(
+      'menu',
+      sessionIdFromKey(keys[0]),
+      MENU_RATE_LIMIT,
+      MENU_RATE_WINDOW_SECONDS,
+    );
+    if (!allowed) {
+      const marked = await client.models.MenuAnalysis.update({
+        id,
+        status: 'ERROR',
+        errorMessage: "You've scanned a lot of menus just now — give it a minute and try again.",
+      });
+      if (marked.errors?.length) {
+        console.error(`Could not mark job ${id} as rate-limited:`, JSON.stringify(marked.errors));
+      }
+      return;
+    }
+
     const result = await analyzePages(keys, job.userContext);
 
     // The data client does NOT throw on a failed mutation — it returns errors in-band.

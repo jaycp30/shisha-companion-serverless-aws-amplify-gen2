@@ -9,8 +9,27 @@ import { getAmplifyDataClientConfig } from '@aws-amplify/backend/function/runtim
 import { env } from '$amplify/env/chat';
 import type { Schema } from '../../data/resource';
 import { buildSystemPrompt } from './persona';
+import { checkRateLimit } from '../rate-limit';
 
 const bedrock = new BedrockRuntimeClient();
+
+// Cap paid Bedrock chat calls per client IP. A lively conversation runs a few
+// replies a minute at most (each round-trip takes a second or two), so 30/min is
+// generous for a real user while stopping a script from hammering the endpoint.
+const CHAT_RATE_LIMIT = 30;
+const CHAT_RATE_WINDOW_SECONDS = 60;
+
+// In-character reply when a client trips the rate limit — no Bedrock call is made.
+const RATE_LIMITED_REPLY =
+  "Whoa, slow down a sec — let me catch my breath. Give me a moment and try again. 🐱";
+
+// AppSync forwards the caller chain in `x-forwarded-for`; the first entry is the
+// real client. Falls back to a shared bucket if it is somehow absent, so an
+// unkeyable request still counts against *something* rather than escaping the cap.
+function clientIp(headers: Record<string, string | undefined>): string {
+  const forwarded = headers['x-forwarded-for'];
+  return forwarded?.split(',')[0]?.trim() || 'unknown';
+}
 
 // Data client for CafeNote reads/writes (granted via allow.resource(chat) in the schema).
 const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(env);
@@ -95,6 +114,18 @@ async function distillAndStoreNote(storeKey: string, userText: string): Promise<
 }
 
 export const handler: Schema['chat']['functionHandler'] = async (event) => {
+  // Throttle before spending anything on Bedrock. Fail-open by design (see helper).
+  const ip = clientIp(event.request.headers);
+  const { allowed } = await checkRateLimit(
+    'chat',
+    ip,
+    CHAT_RATE_LIMIT,
+    CHAT_RATE_WINDOW_SECONDS,
+  );
+  if (!allowed) {
+    return RATE_LIMITED_REPLY;
+  }
+
   const { messagesJson, menuJson, sessionJson, storeName, captureNote } = event.arguments;
 
   // The frontend sends the running transcript as JSON; keep only the tail.
