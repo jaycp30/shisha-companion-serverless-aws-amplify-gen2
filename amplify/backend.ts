@@ -6,6 +6,7 @@ import { AttributeType, BillingMode, Table } from 'aws-cdk-lib/aws-dynamodb';
 import { data } from './data/resource';
 import { storage } from './storage/resource';
 import { getUploadUrl } from './functions/get-upload-url/resource';
+import { mintSessionToken } from './functions/mint-session-token/resource';
 import { analyzeMenu } from './functions/analyze-menu/resource';
 import { chat } from './functions/chat/resource';
 import { FOUNDATION_MODEL_ID, MODEL_ID } from './functions/model';
@@ -16,6 +17,7 @@ const backend = defineBackend({
   data,
   storage,
   getUploadUrl,
+  mintSessionToken,
   analyzeMenu,
   chat,
 });

@@ -1,4 +1,5 @@
 import { client } from './amplify';
+import { getSessionToken } from './sessionToken';
 import type { MenuResponse } from '../types/menu';
 
 // Guard rails checked in the browser, before we bother the backend at all.
@@ -38,11 +39,13 @@ export interface AnalyzeOutcome {
 }
 
 /** Presign, then PUT one page. Returns the S3 key the analyzer should read. */
-async function uploadPage(file: File): Promise<string> {
-  // 1. Ask the backend to presign an S3 PUT for this content type.
+async function uploadPage(file: File, sessionToken: string): Promise<string> {
+  // 1. Ask the backend to presign an S3 PUT for this content type. The session token
+  //    proves a Turnstile challenge was passed — no token, no presigned URL.
   const presign = await client.mutations.getUploadUrl({
     contentType: file.type,
     sessionId: SESSION_ID,
+    sessionToken,
   });
   if (presign.errors?.length || !presign.data) {
     throw new MenuUploadError(
@@ -98,10 +101,23 @@ export async function analyzeMenuPages(
     }
   }
 
+  // One session token covers every page — fetched BEFORE the parallel presigns
+  // because a Turnstile token is single-use: five concurrent challenges would be
+  // five widget runs, but one HMAC session token is freely reusable. This may pop
+  // the (usually invisible) human check on first use.
+  let sessionToken: string;
+  try {
+    sessionToken = await getSessionToken();
+  } catch (error) {
+    throw new MenuUploadError(
+      error instanceof Error ? error.message : 'Human check failed — please try again.',
+    );
+  }
+
   // Pages are independent uploads, so run them together. Promise.all preserves input
   // order in its result, which is what keeps page 1 as page 1 for the model.
   onStage?.('uploading');
-  const newKeys = await Promise.all(files.map(uploadPage));
+  const newKeys = await Promise.all(files.map((file) => uploadPage(file, sessionToken)));
 
   // Append semantics: the job re-reads the whole accumulated menu (old pages + new) in
   // one vision call, so picks and pairings can span everything the cat has seen.

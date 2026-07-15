@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 // first `ampx sandbox` run is expected — the file is generated at deploy time.
 import { env } from '$amplify/env/get-upload-url';
 import type { Schema } from '../../data/resource';
+import { isValidSessionToken } from '../session-token';
 
 // Only these image types are accepted for a menu upload.
 const ALLOWED_CONTENT_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -19,7 +20,14 @@ const s3 = new S3Client();
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const handler: Schema['getUploadUrl']['functionHandler'] = async (event) => {
-  const { contentType, sessionId } = event.arguments;
+  const { contentType, sessionId, sessionToken } = event.arguments;
+
+  // Proof-of-humanness first: no valid session token (see mintSessionToken), no
+  // presigned URL — and therefore no upload to feed the paid vision analysis.
+  // The exact message matters: the frontend detects it to auto-renew and retry.
+  if (!isValidSessionToken(sessionToken, env.SESSION_TOKEN_SECRET)) {
+    throw new Error('Session expired — please try again.');
+  }
 
   // Never trust the client: validate the declared MIME type before signing a URL.
   if (!ALLOWED_CONTENT_TYPES.has(contentType)) {

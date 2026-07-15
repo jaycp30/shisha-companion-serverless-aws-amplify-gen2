@@ -1,5 +1,6 @@
 import { type ClientSchema, a, defineData } from '@aws-amplify/backend';
 import { getUploadUrl } from '../functions/get-upload-url/resource';
+import { mintSessionToken } from '../functions/mint-session-token/resource';
 import { analyzeMenu } from '../functions/analyze-menu/resource';
 import { chat } from '../functions/chat/resource';
 
@@ -14,9 +15,31 @@ const schema = a
     // Presign an S3 PUT for the menu photo. `sessionId` (a client-minted UUID) groups
     // one browsing session's photos under menu/<sessionId>/ — optional so older
     // frontends keep working.
+    // Exchange a Cloudflare Turnstile token (single-use, minutes-lived) for our own
+    // reusable HMAC session token (hours-lived). One challenge per browsing session
+    // then covers every protected call — including the PARALLEL presigns of a
+    // multi-page upload, which a single-use token could never satisfy.
+    mintSessionToken: a
+      .mutation()
+      .arguments({ turnstileToken: a.string().required() })
+      .returns(
+        a.customType({
+          token: a.string().required(),
+          expiresAt: a.integer().required(),
+        }),
+      )
+      .authorization((allow) => [allow.publicApiKey()])
+      .handler(a.handler.function(mintSessionToken)),
+
     getUploadUrl: a
       .mutation()
-      .arguments({ contentType: a.string().required(), sessionId: a.string() })
+      .arguments({
+        contentType: a.string().required(),
+        sessionId: a.string(),
+        // Proof a Turnstile challenge was passed (see mintSessionToken) — verified
+        // in the handler before any presigned URL is issued.
+        sessionToken: a.string().required(),
+      })
       .returns(
         a.customType({
           uploadUrl: a.string().required(),
@@ -66,6 +89,9 @@ const schema = a
         sessionJson: a.string(),
         storeName: a.string(),
         captureNote: a.boolean(),
+        // Proof a Turnstile challenge was passed (see mintSessionToken) — verified
+        // in the handler before the (paid) Bedrock call.
+        sessionToken: a.string().required(),
       })
       .returns(a.string())
       .authorization((allow) => [allow.publicApiKey()])

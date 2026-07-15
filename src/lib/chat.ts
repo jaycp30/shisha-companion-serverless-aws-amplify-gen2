@@ -1,4 +1,9 @@
 import { client } from './amplify';
+import {
+  getSessionToken,
+  invalidateSessionToken,
+  SESSION_EXPIRED_MARKER,
+} from './sessionToken';
 import type { MenuAnalysis } from '../types/menu';
 
 export interface ChatMessage {
@@ -38,14 +43,29 @@ export async function sendChat(
   session: ChatSessionContext,
   { captureNote }: SendChatOptions = {},
 ): Promise<string> {
-  const response = await client.queries.chat({
+  const args = {
     messagesJson: JSON.stringify(messages.slice(-MAX_HISTORY_SENT)),
     menuJson: menu ? JSON.stringify(menu) : undefined,
     sessionJson: JSON.stringify(session),
     // The venue ties this chat to its café notes; the Lambda normalizes it into a key.
     storeName: menu?.store_name ?? undefined,
     captureNote,
+  };
+
+  let response = await client.queries.chat({
+    ...args,
+    sessionToken: await getSessionToken(),
   });
+
+  // A rejected session token is self-healing: mint a fresh one (may re-run the
+  // invisible Turnstile check) and retry ONCE. Any other error falls through as-is.
+  if (response.errors?.some((e) => e.message.includes(SESSION_EXPIRED_MARKER))) {
+    invalidateSessionToken();
+    response = await client.queries.chat({
+      ...args,
+      sessionToken: await getSessionToken(),
+    });
+  }
 
   if (response.errors?.length || !response.data) {
     throw new ChatError(response.errors?.[0]?.message ?? "The cat didn't answer.");

@@ -79,6 +79,25 @@ Vite reads `.env.local` **once at startup** — restart `npm run dev` after chan
 |---|---|
 | `VITE_ASSET_BASE_URL` | Point mascot/background/music at a different bucket or a local copy. |
 | `VITE_OSM_API_BASE` | Where "suggest a lounge" notes are POSTed. **Set this to the OSM dev sandbox while testing** so you never write throwaway notes to the live map: `VITE_OSM_API_BASE=https://api06.dev.openstreetmap.org`. Delete it before shipping so real suggestions go to real OpenStreetMap. |
+| `VITE_TURNSTILE_SITE_KEY` | Cloudflare Turnstile **site key** (public, ships in the bundle). Locally, use the always-pass test key `1x00000000000000000000AA`. In the Amplify console, set the real key from the Cloudflare dashboard (Managed widget, hostnames `shisha.jaycloud.net` + `localhost`). |
+
+### Backend secrets (Amplify secrets, not env vars)
+
+The Turnstile handshake needs two secrets, set per backend (sandbox and branch env each
+have their own — a sandbox secret never leaks into prod):
+
+| Secret | Value |
+|---|---|
+| `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile **secret key**. Sandbox can use the always-pass test secret `1x0000000000000000000000000000000AA`; prod needs the real one from the Cloudflare dashboard. |
+| `SESSION_TOKEN_SECRET` | Any long random string (`openssl rand -hex 32`) — signs the HMAC session tokens that `getUploadUrl`/`chat` require. |
+
+```bash
+npx ampx sandbox secret set TURNSTILE_SECRET_KEY
+npx ampx sandbox secret set SESSION_TOKEN_SECRET
+```
+
+For the branch env, set the same two names in the Amplify console
+(**Hosting → Secrets**) before pushing this feature — deploys fail if they're missing.
 
 ## Deploying to AWS (Amplify Gen 2)
 

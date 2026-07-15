@@ -10,6 +10,7 @@ import { env } from '$amplify/env/chat';
 import type { Schema } from '../../data/resource';
 import { buildSystemPrompt } from './persona';
 import { checkRateLimit } from '../rate-limit';
+import { isValidSessionToken } from '../session-token';
 
 const bedrock = new BedrockRuntimeClient();
 
@@ -114,6 +115,12 @@ async function distillAndStoreNote(storeKey: string, userText: string): Promise<
 }
 
 export const handler: Schema['chat']['functionHandler'] = async (event) => {
+  // Proof-of-humanness first (cheapest check: a local HMAC, no network). The exact
+  // message matters: the frontend detects it to mint a fresh token and retry once.
+  if (!isValidSessionToken(event.arguments.sessionToken, env.SESSION_TOKEN_SECRET)) {
+    throw new Error('Session expired — please try again.');
+  }
+
   // Throttle before spending anything on Bedrock. Fail-open by design (see helper).
   const ip = clientIp(event.request.headers);
   const { allowed } = await checkRateLimit(
