@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AudioControls } from './components/AudioControls';
 import { BackgroundVideo } from './components/BackgroundVideo';
 import { ChatDrawer } from './components/ChatDrawer';
@@ -6,13 +6,22 @@ import { ClickSpark } from './components/ClickSpark';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { MascotDock } from './components/MascotDock';
 import { MenuUpload } from './components/MenuUpload';
+import { NearbyCafes } from './components/NearbyCafes';
 import { Recommendations } from './components/Recommendations';
 import { ScrollProgress } from './components/ScrollProgress';
 import { SessionHud } from './components/SessionHud';
 import { Splash } from './components/Splash';
 import type { Mood } from './config/audio';
-import type { MascotState } from './config/mascot';
+import { ALL_MASCOT_STATES, type MascotState } from './config/mascot';
 import { ONE_SHOT_MS, SESSION_CONFIG } from './config/session';
+
+// The cat pipes up once per session, after things have settled in. The reply becomes an
+// anonymous note about the café (see chat handler), so ask only when a session is real.
+const CAFE_QUESTION_AFTER_SECONDS = 10 * 60;
+const CAT_CAFE_QUESTION =
+  "How's this place treating you so far? Tell me in the chat — I'm curious 🐾";
+// Distinct from useSession's incrementing notice ids, which start at 1.
+const CAFE_BUBBLE_NOTICE_ID = -1;
 import { useAudio } from './hooks/useAudio';
 import { useSession } from './hooks/useSession';
 import type { Stage } from './lib/analyzeMenu';
@@ -24,6 +33,8 @@ function App() {
   const audio = useAudio();
 
   const [result, setResult] = useState<MenuResponse | null>(null);
+  // S3 keys of every menu page analyzed this session — the append-behaviour ledger.
+  const [menuKeys, setMenuKeys] = useState<string[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isTalking, setIsTalking] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
@@ -41,6 +52,30 @@ function App() {
   const [oneShot, setOneShot] = useState<MascotState | null>(null);
   // Two idle clips, alternated, so a resting cat doesn't look like a stuck GIF.
   const [idleClip, setIdleClip] = useState<MascotState>('idle');
+  // Dev-only: force a specific clip via the switcher strip (null = normal behaviour).
+  const [devClip, setDevClip] = useState<MascotState | null>(null);
+
+  // The cat's one proactive question per session, asked mid-session once a menu exists.
+  // Its answer (the user's next chat message) becomes an anonymous café note.
+  const [cafeSeed, setCafeSeed] = useState<string | null>(null);
+  const [cafeBubbleOpen, setCafeBubbleOpen] = useState(false);
+  const askedAboutCafe = useRef(false);
+
+  useEffect(() => {
+    if (
+      askedAboutCafe.current ||
+      !session.started ||
+      session.elapsedSeconds < CAFE_QUESTION_AFTER_SECONDS
+    ) {
+      return;
+    }
+    askedAboutCafe.current = true;
+    setCafeSeed(CAT_CAFE_QUESTION);
+    setCafeBubbleOpen(true);
+  }, [session.started, session.elapsedSeconds]);
+
+  const cafeBubbleNotice =
+    cafeBubbleOpen && cafeSeed ? { id: CAFE_BUBBLE_NOTICE_ID, text: cafeSeed } : null;
 
   // A one-shot also clears on a timer, not only when its clip ends. If something
   // higher-priority preempts it mid-play (the coals run out during 'happy'), the video
@@ -59,7 +94,9 @@ function App() {
    * (Per the handoff, 'sleepy' should outrank 'greeting'. It doesn't need to here —
    * greeting only fires at t=0, when a 90-minute session is impossible.)
    */
-  const mascotState: MascotState = session.coalsExpired
+  const mascotState: MascotState = devClip
+    ? devClip
+    : session.coalsExpired
     ? 'alert'
     : session.pacingNudge
       ? 'easy-there'
@@ -81,6 +118,28 @@ function App() {
   // The chat only gets a menu once one has actually been analyzed successfully.
   const analyzedMenu = result && !isNotAMenu(result) ? result : null;
 
+  // A puff earns the smoking clip — from the HUD button or from tapping the cat.
+  function logPuffWithSmoke(): void {
+    session.logPuff();
+    setOneShot('smoking');
+  }
+
+  // Changing the coals plays 'goodbye' (the cat waves off the spent coals). Only on a
+  // RE-light: the first light is the session starting, not a farewell to anything.
+  function lightCoalsWithGoodbye(): void {
+    if (session.started) setOneShot('goodbye');
+    session.lightCoals();
+  }
+
+  // End the session: the cat waves goodbye, then a full reload returns to the splash.
+  // A reload (rather than resetting each piece of state) is the honest "clean slate" —
+  // every bit of session state is in-memory by design, so this restores the pristine
+  // start exactly. The delay lets the goodbye clip play before the page resets.
+  function handleEndSession(): void {
+    setOneShot('goodbye');
+    window.setTimeout(() => window.location.reload(), ONE_SHOT_MS);
+  }
+
   function handleClipEnd(): void {
     // A finished one-shot steps aside, and an idle that has run its course hands over
     // to the other idle clip. Both are "this clip is done" — one handler covers it.
@@ -92,13 +151,22 @@ function App() {
     setIsAnalyzing(stage !== null);
   }
 
-  function handleResult(response: MenuResponse): void {
+  function handleResult(response: MenuResponse, s3Keys: string[]): void {
     setResult(response);
     if (!isNotAMenu(response)) {
+      // Remember every page behind this analysis — the next upload appends to them,
+      // so the cat's menu knowledge grows instead of being replaced.
+      setMenuKeys(s3Keys);
       setOneShot('happy');
       // The quest-cleared flourish: ducks the music, plays, restores.
       audio.playSting();
     }
+  }
+
+  // "New lounge, new menu": forget the accumulated pages and the current analysis.
+  function handleMenuReset(): void {
+    setMenuKeys([]);
+    setResult(null);
   }
 
   function handleStart(mood: Mood, muted: boolean): void {
@@ -133,7 +201,16 @@ function App() {
         </header>
 
         <ErrorBoundary>
-          <MenuUpload onResult={handleResult} onStageChange={handleStageChange} />
+          <div className="mb-6">
+            <NearbyCafes />
+          </div>
+
+          <MenuUpload
+            onResult={handleResult}
+            onStageChange={handleStageChange}
+            existingKeys={menuKeys}
+            onReset={handleMenuReset}
+          />
 
           {result && (
             <div className="mt-12">
@@ -151,9 +228,10 @@ function App() {
       </div>
 
       <SessionHud
-        session={session}
+        session={{ ...session, logPuff: logPuffWithSmoke, lightCoals: lightCoalsWithGoodbye }}
         collapsed={hudCollapsed}
         onToggle={() => setHudCollapsed((collapsed) => !collapsed)}
+        onEndSession={handleEndSession}
       />
 
       <ChatDrawer
@@ -162,17 +240,43 @@ function App() {
         menu={analyzedMenu}
         session={chatSession}
         onTalkingChange={setIsTalking}
+        seedQuestion={cafeSeed}
+        onSeedConsumed={() => setCafeSeed(null)}
       />
 
       <MascotDock
         state={mascotState}
-        notice={session.notice}
+        notice={session.notice ?? cafeBubbleNotice}
         chatOpen={chatOpen}
         onClipEnd={handleClipEnd}
-        onTap={session.logPuff}
-        onDismissNotice={session.dismissNotice}
-        onOpenChat={() => setChatOpen(true)}
+        onTap={logPuffWithSmoke}
+        onDismissNotice={
+          session.notice ? session.dismissNotice : () => setCafeBubbleOpen(false)
+        }
+        onOpenChat={() => {
+          setCafeBubbleOpen(false);
+          setChatOpen(true);
+        }}
       />
+
+      {/* Dev-only clip switcher: force any mascot state to verify all 11 clips render.
+          Ships to nobody — import.meta.env.DEV is false in production builds. */}
+      {import.meta.env.DEV && (
+        <div className="fixed bottom-0 left-1/2 z-50 flex max-w-xl -translate-x-1/2 flex-wrap justify-center gap-1 p-1">
+          {ALL_MASCOT_STATES.map((state) => (
+            <button
+              key={state}
+              type="button"
+              onClick={() => setDevClip((current) => (current === state ? null : state))}
+              className={`rounded px-1.5 py-0.5 text-[10px] ${
+                devClip === state ? 'bg-espresso text-cream' : 'bg-petal-soft text-espresso'
+              }`}
+            >
+              {state}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Sits above everything with pointer-events:none, so it never blocks a click. */}
       <ClickSpark />
