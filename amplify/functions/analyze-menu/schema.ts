@@ -15,7 +15,6 @@ const pick = z.object({
 const avoidItem = z.object({ name: z.string(), why: z.string() });
 
 const menuAnalysis = z.object({
-  menu_items: z.array(z.string()).default([]),
   // min(1) rather than min(5): if the model returns four good picks for a tiny menu,
   // that's a worse answer, not a broken one. Rejecting it would turn a mild quality
   // dip into a hard error the user sees as a crash.
@@ -40,12 +39,15 @@ export type MenuResponse = z.infer<typeof menuResponse>;
 // Parse + validate the raw model text. Throws if the shape is wrong so the caller
 // surfaces a real error instead of shipping garbage to the UI.
 export function parseMenuAnalysis(raw: string): MenuResponse {
-  // Models occasionally wrap JSON in ```json fences despite instructions — strip them.
-  const cleaned = raw
-    .trim()
-    .replace(/^```(?:json)?/, '')
-    .replace(/```$/, '')
-    .trim();
+  // Despite "STRICT JSON ONLY" instructions, models sometimes wrap the JSON in ```json
+  // fences or lead with prose ("This is part of a menu..."). Don't fight it in the
+  // prompt alone — slice out the outermost {...} and parse that.
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start === -1 || end <= start) {
+    throw new Error('Model returned no JSON object.');
+  }
+  const cleaned = raw.slice(start, end + 1);
 
   const result = menuResponse.safeParse(JSON.parse(cleaned));
   if (!result.success) {

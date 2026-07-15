@@ -1,5 +1,5 @@
 import { useState, type ChangeEvent } from 'react';
-import { analyzeMenuPhoto, MenuUploadError, type Stage } from '../lib/analyzeMenu';
+import { analyzeMenuPages, MAX_PAGES, MenuUploadError, type Stage } from '../lib/analyzeMenu';
 import type { MenuResponse } from '../types/menu';
 
 interface MenuUploadProps {
@@ -10,7 +10,6 @@ interface MenuUploadProps {
 
 // Friendly status text for each step of the flow.
 const STAGE_LABEL: Record<Stage, string> = {
-  presigning: 'Getting ready…',
   uploading: 'Uploading your menu…',
   analyzing: 'Reading the menu… 🐾',
 };
@@ -18,7 +17,7 @@ const STAGE_LABEL: Record<Stage, string> = {
 export function MenuUpload({ onResult, onStageChange }: MenuUploadProps) {
   const [stage, setStage] = useState<Stage | null>(null);
   const [error, setError] = useState('');
-  const [fileName, setFileName] = useState('');
+  const [fileNames, setFileNames] = useState<string[]>([]);
 
   const busy = stage !== null;
 
@@ -29,14 +28,18 @@ export function MenuUpload({ onResult, onStageChange }: MenuUploadProps) {
   }
 
   async function handleFile(event: ChangeEvent<HTMLInputElement>): Promise<void> {
-    const file = event.target.files?.[0];
-    if (!file) return;
+    // The picker hands back a FileList; sort by name so page order survives an OS that
+    // returns them in selection order rather than filename order.
+    const files = Array.from(event.target.files ?? []).sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { numeric: true }),
+    );
+    if (files.length === 0) return;
 
-    setFileName(file.name);
+    setFileNames(files.map((file) => file.name));
     setError('');
 
     try {
-      const result = await analyzeMenuPhoto(file, { onStage: updateStage });
+      const result = await analyzeMenuPages(files, { onStage: updateStage });
       // Clear the stage BEFORE handing the result up, so the parent's "done" reaction
       // (mascot -> happy) lands after the "busy" one (mascot -> idle) and wins.
       updateStage(null);
@@ -58,9 +61,10 @@ export function MenuUpload({ onResult, onStageChange }: MenuUploadProps) {
 
   return (
     <section className="rounded-2xl border border-petal bg-cream p-8">
-      <h2 className="text-xl font-semibold">Upload a menu photo</h2>
+      <h2 className="text-xl font-semibold">Upload your menu</h2>
       <p className="mt-2 text-espresso-soft">
-        JPEG, PNG, or WebP — up to 10 MB. I&apos;ll pick out flavors, mixes, and drink pairings.
+        JPEG, PNG, or WebP — up to 10 MB each. Menu runs over several pages? Pick them all
+        (up to {MAX_PAGES}) and I&apos;ll read them as one.
       </p>
 
       <div className="mt-6 flex flex-wrap items-center gap-4">
@@ -69,18 +73,23 @@ export function MenuUpload({ onResult, onStageChange }: MenuUploadProps) {
             busy ? 'pointer-events-none opacity-60' : ''
           }`}
         >
-          {busy ? 'Working…' : 'Choose menu photo'}
+          {busy ? 'Working…' : 'Choose menu photos'}
           <input
             type="file"
             accept="image/jpeg,image/png,image/webp"
+            multiple
             className="sr-only"
             onChange={handleFile}
             disabled={busy}
           />
         </label>
 
-        {fileName && !busy && !error && (
-          <span className="text-sm text-espresso-soft">{fileName}</span>
+        {fileNames.length > 0 && !busy && !error && (
+          <span className="text-sm text-espresso-soft">
+            {fileNames.length === 1
+              ? fileNames[0]
+              : `${fileNames.length} pages: ${fileNames.join(', ')}`}
+          </span>
         )}
       </div>
 

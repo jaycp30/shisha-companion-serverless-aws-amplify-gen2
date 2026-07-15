@@ -17,6 +17,11 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* Type-safety. `strict` (esp. strictNullChecks) is REQUIRED for Amplify Data's
+       ClientSchema model types to resolve — without it they silently collapse to a
+       useless index signature. The codebase already passes clean under it. */
+    "strict": true,
+
     /* Linting */
     "noUnusedLocals": true,
     "noUnusedParameters": true,

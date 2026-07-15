@@ -1,6 +1,7 @@
 import { defineBackend } from '@aws-amplify/backend';
-import { Tags } from 'aws-cdk-lib';
-import { Effect, PolicyStatement } from 'aws-cdk-lib/aws-iam';
+import { Stack, Tags } from 'aws-cdk-lib';
+import { Effect, Policy, PolicyStatement } from 'aws-cdk-lib/aws-iam';
+import { StartingPosition, EventSourceMapping, FilterCriteria, FilterRule } from 'aws-cdk-lib/aws-lambda';
 import { data } from './data/resource';
 import { storage } from './storage/resource';
 import { getUploadUrl } from './functions/get-upload-url/resource';
@@ -32,6 +33,45 @@ const bedrockInvokePolicy = new PolicyStatement({
 
 backend.analyzeMenu.resources.lambda.addToRolePolicy(bedrockInvokePolicy);
 backend.chat.resources.lambda.addToRolePolicy(bedrockInvokePolicy);
+
+// Trigger the analyze-menu worker from the MenuAnalysis table's DynamoDB stream.
+// Amplify enables the stream on model tables by default (it powers subscriptions), so we
+// only attach a mapping. Filtered to INSERT: new jobs trigger a run, but the worker's own
+// DONE/ERROR write-backs (MODIFY events) do not — which is what stops an infinite loop.
+const menuAnalysisTable = backend.data.resources.tables['MenuAnalysis'];
+
+const streamReadPolicy = new Policy(
+  Stack.of(menuAnalysisTable),
+  'AnalyzeMenuStreamReadPolicy',
+  {
+    statements: [
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: [
+          'dynamodb:DescribeStream',
+          'dynamodb:GetRecords',
+          'dynamodb:GetShardIterator',
+          'dynamodb:ListStreams',
+        ],
+        resources: [menuAnalysisTable.tableStreamArn!],
+      }),
+    ],
+  },
+);
+backend.analyzeMenu.resources.lambda.role?.attachInlinePolicy(streamReadPolicy);
+
+const streamMapping = new EventSourceMapping(
+  Stack.of(menuAnalysisTable),
+  'AnalyzeMenuJobStreamMapping',
+  {
+    target: backend.analyzeMenu.resources.lambda,
+    eventSourceArn: menuAnalysisTable.tableStreamArn,
+    startingPosition: StartingPosition.LATEST,
+    // Only wake the worker for freshly-created jobs.
+    filters: [FilterCriteria.filter({ eventName: FilterRule.isEqual('INSERT') })],
+  },
+);
+streamMapping.node.addDependency(streamReadPolicy);
 
 // Cost-allocation / governance tags. Applied at the root stack; the CDK Tag
 // aspect cascades them into every nested stack (data, storage, functions) and

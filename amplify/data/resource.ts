@@ -3,43 +3,59 @@ import { getUploadUrl } from '../functions/get-upload-url/resource';
 import { analyzeMenu } from '../functions/analyze-menu/resource';
 import { chat } from '../functions/chat/resource';
 
-// No database models here. The three entries are custom AppSync operations that
-// simply invoke a Lambda — AppSync is a typed front door, not a data store.
+// `getUploadUrl` and `chat` are custom AppSync operations that just invoke a Lambda.
+// `MenuAnalysis` is a real model (a DynamoDB table): menu analysis is too slow to run
+// inside AppSync's ~30s request ceiling, so it runs as an async job instead — the client
+// creates a PENDING row, a stream-triggered worker fills in the result, and the client
+// subscribes for the flip to DONE. See understanding.md for the full rationale.
 // `publicApiKey` means no login: an API key ships to the frontend.
-const schema = a.schema({
-  // Presign an S3 PUT for the menu photo.
-  getUploadUrl: a
-    .mutation()
-    .arguments({ contentType: a.string().required() })
-    .returns(
-      a.customType({
-        uploadUrl: a.string().required(),
-        s3Key: a.string().required(),
-      }),
-    )
-    .authorization((allow) => [allow.publicApiKey()])
-    .handler(a.handler.function(getUploadUrl)),
+const schema = a
+  .schema({
+    // Presign an S3 PUT for the menu photo.
+    getUploadUrl: a
+      .mutation()
+      .arguments({ contentType: a.string().required() })
+      .returns(
+        a.customType({
+          uploadUrl: a.string().required(),
+          s3Key: a.string().required(),
+        }),
+      )
+      .authorization((allow) => [allow.publicApiKey()])
+      .handler(a.handler.function(getUploadUrl)),
 
-  // Analyze an uploaded menu photo. Returns free-form JSON (validated in-Lambda).
-  analyzeMenu: a
-    .query()
-    .arguments({ s3Key: a.string().required(), userContext: a.string() })
-    .returns(a.json())
-    .authorization((allow) => [allow.publicApiKey()])
-    .handler(a.handler.function(analyzeMenu)),
+    // One async menu-analysis job. The client writes status PENDING + the inputs; the
+    // analyze-menu worker (triggered by this table's stream) writes back status DONE +
+    // `result`, or ERROR + `errorMessage`.
+    MenuAnalysis: a
+      .model({
+        status: a.enum(['PENDING', 'DONE', 'ERROR']),
+        // Ordered S3 keys of the uploaded pages (page 1 first).
+        s3Keys: a.string().array().required(),
+        // Optional free-text context (group size, mood, tolerance…).
+        userContext: a.string(),
+        // The MenuResponse JSON once DONE (either the analysis or { error: 'not_a_menu' }).
+        result: a.json(),
+        // A user-safe message when status is ERROR.
+        errorMessage: a.string(),
+      })
+      .authorization((allow) => [allow.publicApiKey()]),
 
-  // Companion chat. Transcript + optional menu/session context come in as JSON strings.
-  chat: a
-    .query()
-    .arguments({
-      messagesJson: a.string().required(),
-      menuJson: a.string(),
-      sessionJson: a.string(),
-    })
-    .returns(a.string())
-    .authorization((allow) => [allow.publicApiKey()])
-    .handler(a.handler.function(chat)),
-});
+    // Companion chat. Transcript + optional menu/session context come in as JSON strings.
+    chat: a
+      .query()
+      .arguments({
+        messagesJson: a.string().required(),
+        menuJson: a.string(),
+        sessionJson: a.string(),
+      })
+      .returns(a.string())
+      .authorization((allow) => [allow.publicApiKey()])
+      .handler(a.handler.function(chat)),
+  })
+  // Let the worker write job results back to the API. Schema-level grant (not per-model)
+  // is how a Lambda is given data-client access; the handler uses generateClient().
+  .authorization((allow) => [allow.resource(analyzeMenu)]);
 
 export type Schema = ClientSchema<typeof schema>;
 

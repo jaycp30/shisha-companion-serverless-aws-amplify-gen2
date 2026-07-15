@@ -29,7 +29,6 @@ export interface DrinkPairing {
 }
 
 export interface MenuAnalysis {
-  menu_items: string[];
   /** 5-7 picks; the first three are always Best / Safer / Stronger. */
   picks: FlavorPick[];
   avoid: AvoidItem[];
