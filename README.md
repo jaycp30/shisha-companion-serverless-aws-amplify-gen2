@@ -52,6 +52,34 @@ frontend talks to the deployed backend either way.
 Media assets are **not in this repo** — they live in a public S3 bucket. To rebuild and
 upload them, see [ASSETS.md](./ASSETS.md).
 
+### Command reference
+
+Three commands blur together — here's when each is actually needed:
+
+| Command | What it does | When to run it |
+|---|---|---|
+| `npm run dev` | Vite dev server with hot reload | Local work. Keep it running; it reloads on every save. |
+| `npm run build` | Production bundle (`tsc -b && vite build`) | Verification / what CI runs on push. Not needed for local testing. |
+| `npx ampx sandbox` | Deploys **your** backend and rewrites `amplify_outputs.json` | Only when you edit anything under `amplify/`. Frontend-only changes don't need it. |
+
+Before pushing anything that touched `amplify/` or dependencies, run what CI runs — all
+three of these must pass (`tsc -b` covers `src/` only, so the backend gets its own check):
+
+```bash
+npx tsc --noEmit -p tsconfig.app.json
+npx tsc --noEmit -p amplify
+npm ci && npm run build
+```
+
+### Local env overrides (`.env.local`)
+
+Vite reads `.env.local` **once at startup** — restart `npm run dev` after changing it.
+
+| Variable | Purpose |
+|---|---|
+| `VITE_ASSET_BASE_URL` | Point mascot/background/music at a different bucket or a local copy. |
+| `VITE_OSM_API_BASE` | Where "suggest a lounge" notes are POSTed. **Set this to the OSM dev sandbox while testing** so you never write throwaway notes to the live map: `VITE_OSM_API_BASE=https://api06.dev.openstreetmap.org`. Delete it before shipping so real suggestions go to real OpenStreetMap. |
+
 ## Deploying to AWS (Amplify Gen 2)
 
 There are **two backends** in this project's life, and they are separate on purpose:
