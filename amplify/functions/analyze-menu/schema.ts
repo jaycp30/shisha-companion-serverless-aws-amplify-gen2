@@ -15,6 +15,8 @@ const pick = z.object({
 const avoidItem = z.object({ name: z.string(), why: z.string() });
 
 const menuAnalysis = z.object({
+  // The venue's name when the menu shows one — links a session to café notes.
+  store_name: z.string().nullable().optional(),
   // min(1) rather than min(5): if the model returns four good picks for a tiny menu,
   // that's a worse answer, not a broken one. Rejecting it would turn a mild quality
   // dip into a hard error the user sees as a crash.

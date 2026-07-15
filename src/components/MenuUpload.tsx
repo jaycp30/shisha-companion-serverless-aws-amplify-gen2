@@ -3,9 +3,14 @@ import { analyzeMenuPages, MAX_PAGES, MenuUploadError, type Stage } from '../lib
 import type { MenuResponse } from '../types/menu';
 
 interface MenuUploadProps {
-  onResult: (result: MenuResponse) => void;
+  /** Called with the analysis AND every page key behind it (old + new). */
+  onResult: (result: MenuResponse, s3Keys: string[]) => void;
   // Lets the parent react to progress — the mascot uses this to switch to 'thinking'.
   onStageChange?: (stage: Stage | null) => void;
+  /** Pages already analyzed this session — new uploads append to these. */
+  existingKeys: readonly string[];
+  /** Clears the session's accumulated menu ("new lounge, new menu"). */
+  onReset: () => void;
 }
 
 // Friendly status text for each step of the flow.
@@ -14,7 +19,7 @@ const STAGE_LABEL: Record<Stage, string> = {
   analyzing: 'Reading the menu… 🐾',
 };
 
-export function MenuUpload({ onResult, onStageChange }: MenuUploadProps) {
+export function MenuUpload({ onResult, onStageChange, existingKeys, onReset }: MenuUploadProps) {
   const [stage, setStage] = useState<Stage | null>(null);
   const [error, setError] = useState('');
   const [fileNames, setFileNames] = useState<string[]>([]);
@@ -39,11 +44,14 @@ export function MenuUpload({ onResult, onStageChange }: MenuUploadProps) {
     setError('');
 
     try {
-      const result = await analyzeMenuPages(files, { onStage: updateStage });
+      const outcome = await analyzeMenuPages(files, {
+        onStage: updateStage,
+        previousKeys: existingKeys,
+      });
       // Clear the stage BEFORE handing the result up, so the parent's "done" reaction
       // (mascot -> happy) lands after the "busy" one (mascot -> idle) and wins.
       updateStage(null);
-      onResult(result);
+      onResult(outcome.response, outcome.s3Keys);
     } catch (err) {
       updateStage(null);
       // Deliberate errors carry a user-safe message. Anything else is almost always
@@ -63,8 +71,9 @@ export function MenuUpload({ onResult, onStageChange }: MenuUploadProps) {
     <section className="rounded-2xl border border-petal bg-cream p-8">
       <h2 className="text-xl font-semibold">Upload your menu</h2>
       <p className="mt-2 text-espresso-soft">
-        JPEG, PNG, or WebP — up to 10 MB each. Menu runs over several pages? Pick them all
-        (up to {MAX_PAGES}) and I&apos;ll read them as one.
+        {existingKeys.length > 0
+          ? `I'm holding ${existingKeys.length} of ${MAX_PAGES} pages — new photos get added to the same menu.`
+          : `JPEG, PNG, or WebP — up to 10 MB each. Menu runs over several pages? Pick them all (up to ${MAX_PAGES}) and I'll read them as one.`}
       </p>
 
       <div className="mt-6 flex flex-wrap items-center gap-4">
@@ -73,7 +82,7 @@ export function MenuUpload({ onResult, onStageChange }: MenuUploadProps) {
             busy ? 'pointer-events-none opacity-60' : ''
           }`}
         >
-          {busy ? 'Working…' : 'Choose menu photos'}
+          {busy ? 'Working…' : existingKeys.length > 0 ? 'Add menu photos' : 'Choose menu photos'}
           <input
             type="file"
             accept="image/jpeg,image/png,image/webp"
@@ -83,6 +92,20 @@ export function MenuUpload({ onResult, onStageChange }: MenuUploadProps) {
             disabled={busy}
           />
         </label>
+
+        {existingKeys.length > 0 && !busy && (
+          <button
+            type="button"
+            onClick={() => {
+              setFileNames([]);
+              setError('');
+              onReset();
+            }}
+            className="rounded-full px-4 py-2 text-sm text-espresso-soft underline-offset-2 transition hover:bg-petal-soft hover:underline"
+          >
+            New menu
+          </button>
+        )}
 
         {fileNames.length > 0 && !busy && !error && (
           <span className="text-sm text-espresso-soft">

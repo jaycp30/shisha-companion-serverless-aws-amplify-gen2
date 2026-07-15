@@ -26,15 +26,25 @@ const MAX_HISTORY_SENT = 8;
 
 export class ChatError extends Error {}
 
+interface SendChatOptions {
+  /** Marks this message as the reply to the cat's café question — the backend distills
+      it into an anonymous note other visitors' cats can draw on. */
+  captureNote?: boolean;
+}
+
 export async function sendChat(
   messages: ChatMessage[],
   menu: MenuAnalysis | null,
   session: ChatSessionContext,
+  { captureNote }: SendChatOptions = {},
 ): Promise<string> {
   const response = await client.queries.chat({
     messagesJson: JSON.stringify(messages.slice(-MAX_HISTORY_SENT)),
     menuJson: menu ? JSON.stringify(menu) : undefined,
     sessionJson: JSON.stringify(session),
+    // The venue ties this chat to its café notes; the Lambda normalizes it into a key.
+    storeName: menu?.store_name ?? undefined,
+    captureNote,
   });
 
   if (response.errors?.length || !response.data) {

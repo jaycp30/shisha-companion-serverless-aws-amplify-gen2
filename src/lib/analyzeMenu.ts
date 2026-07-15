@@ -20,15 +20,30 @@ export type Stage = 'uploading' | 'analyzing';
 // Anything else that escapes (network drop, etc.) is handled generically by the caller.
 export class MenuUploadError extends Error {}
 
+// One id per page load, so a session's photos group under menu/<sessionId>/ in S3.
+// Deliberately NOT persisted (no localStorage): a fresh visit is a fresh session.
+const SESSION_ID = crypto.randomUUID();
+
 interface AnalyzeOptions {
   userContext?: string;
   onStage?: (stage: Stage) => void;
+  /** Keys of pages the cat already knows — new photos are appended to these. */
+  previousKeys?: readonly string[];
+}
+
+export interface AnalyzeOutcome {
+  response: MenuResponse;
+  /** Every page (old + new) behind `response` — feed back in as previousKeys. */
+  s3Keys: string[];
 }
 
 /** Presign, then PUT one page. Returns the S3 key the analyzer should read. */
 async function uploadPage(file: File): Promise<string> {
   // 1. Ask the backend to presign an S3 PUT for this content type.
-  const presign = await client.mutations.getUploadUrl({ contentType: file.type });
+  const presign = await client.mutations.getUploadUrl({
+    contentType: file.type,
+    sessionId: SESSION_ID,
+  });
   if (presign.errors?.length || !presign.data) {
     throw new MenuUploadError(
       presign.errors?.[0]?.message ?? "Couldn't start the upload.",
@@ -62,13 +77,17 @@ async function uploadPage(file: File): Promise<string> {
  */
 export async function analyzeMenuPages(
   files: readonly File[],
-  { userContext, onStage }: AnalyzeOptions = {},
-): Promise<MenuResponse> {
+  { userContext, onStage, previousKeys = [] }: AnalyzeOptions = {},
+): Promise<AnalyzeOutcome> {
   if (files.length === 0) {
     throw new MenuUploadError('Pick at least one menu photo.');
   }
-  if (files.length > MAX_PAGES) {
-    throw new MenuUploadError(`That's more than ${MAX_PAGES} pages — pick fewer.`);
+  if (previousKeys.length + files.length > MAX_PAGES) {
+    throw new MenuUploadError(
+      previousKeys.length > 0
+        ? `The cat already knows ${previousKeys.length} page(s) and can hold ${MAX_PAGES} — start a new menu or pick fewer photos.`
+        : `That's more than ${MAX_PAGES} pages — pick fewer.`,
+    );
   }
   for (const file of files) {
     if (!ALLOWED_TYPES.includes(file.type)) {
@@ -82,7 +101,11 @@ export async function analyzeMenuPages(
   // Pages are independent uploads, so run them together. Promise.all preserves input
   // order in its result, which is what keeps page 1 as page 1 for the model.
   onStage?.('uploading');
-  const s3Keys = await Promise.all(files.map(uploadPage));
+  const newKeys = await Promise.all(files.map(uploadPage));
+
+  // Append semantics: the job re-reads the whole accumulated menu (old pages + new) in
+  // one vision call, so picks and pairings can span everything the cat has seen.
+  const s3Keys = [...previousKeys, ...newKeys];
 
   // Analysis is too slow for a synchronous request (it blows past AppSync's ~30s
   // ceiling), so it runs as a background job: create a PENDING row, then wait for a
@@ -99,7 +122,7 @@ export async function analyzeMenuPages(
     );
   }
 
-  return waitForJob(created.data.id);
+  return { response: await waitForJob(created.data.id), s3Keys };
 }
 
 // A job row's `result` (a.json) round-trips as an object here — but tolerate a stringified

@@ -11,10 +11,12 @@ import { chat } from '../functions/chat/resource';
 // `publicApiKey` means no login: an API key ships to the frontend.
 const schema = a
   .schema({
-    // Presign an S3 PUT for the menu photo.
+    // Presign an S3 PUT for the menu photo. `sessionId` (a client-minted UUID) groups
+    // one browsing session's photos under menu/<sessionId>/ — optional so older
+    // frontends keep working.
     getUploadUrl: a
       .mutation()
-      .arguments({ contentType: a.string().required() })
+      .arguments({ contentType: a.string().required(), sessionId: a.string() })
       .returns(
         a.customType({
           uploadUrl: a.string().required(),
@@ -41,21 +43,38 @@ const schema = a
       })
       .authorization((allow) => [allow.publicApiKey()]),
 
-    // Companion chat. Transcript + optional menu/session context come in as JSON strings.
+    // One anonymous, model-sanitized observation about a venue ("service slows down on
+    // weekends"). Written ONLY by the chat Lambda — clients can read but never write,
+    // which is what keeps a public-API app's shared memory from being spammable
+    // directly. storeKey is the normalized venue name (see chat handler).
+    CafeNote: a
+      .model({
+        storeKey: a.string().required(),
+        note: a.string().required(),
+      })
+      .secondaryIndexes((index) => [index('storeKey').queryField('listNotesByStore')])
+      .authorization((allow) => [allow.publicApiKey().to(['read'])]),
+
+    // Companion chat. Transcript + optional menu/session context come in as JSON
+    // strings. `storeName` ties the chat to a venue's notes; `captureNote` marks the
+    // last user message as the reply to the cat's café question.
     chat: a
       .query()
       .arguments({
         messagesJson: a.string().required(),
         menuJson: a.string(),
         sessionJson: a.string(),
+        storeName: a.string(),
+        captureNote: a.boolean(),
       })
       .returns(a.string())
       .authorization((allow) => [allow.publicApiKey()])
       .handler(a.handler.function(chat)),
   })
-  // Let the worker write job results back to the API. Schema-level grant (not per-model)
-  // is how a Lambda is given data-client access; the handler uses generateClient().
-  .authorization((allow) => [allow.resource(analyzeMenu)]);
+  // Let the Lambdas use the data API: analyze-menu writes job results back, chat reads
+  // and writes café notes. Schema-level grant (not per-model) is how a function gets
+  // data-client access; the handlers use generateClient().
+  .authorization((allow) => [allow.resource(analyzeMenu), allow.resource(chat)]);
 
 export type Schema = ClientSchema<typeof schema>;
 

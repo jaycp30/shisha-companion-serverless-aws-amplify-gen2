@@ -14,17 +14,27 @@ const UPLOAD_URL_TTL_SECONDS = 300;
 
 const s3 = new S3Client();
 
+// A session id must look like the UUID the client mints — anything else could be a
+// path-injection attempt (e.g. "../") aimed at signing a key outside menu/.
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export const handler: Schema['getUploadUrl']['functionHandler'] = async (event) => {
-  const { contentType } = event.arguments;
+  const { contentType, sessionId } = event.arguments;
 
   // Never trust the client: validate the declared MIME type before signing a URL.
   if (!ALLOWED_CONTENT_TYPES.has(contentType)) {
     throw new Error(`Unsupported content type: ${contentType}`);
   }
+  if (sessionId && !UUID_PATTERN.test(sessionId)) {
+    throw new Error('Invalid session id.');
+  }
 
-  // Random key under menu/ so uploads never collide and match the storage path rule.
+  // Random key so uploads never collide, grouped per session when the client sends a
+  // session id. Everything stays under menu/ to match the storage path rule.
   const extension = contentType.split('/')[1];
-  const s3Key = `menu/${randomUUID()}.${extension}`;
+  const s3Key = sessionId
+    ? `menu/${sessionId}/${randomUUID()}.${extension}`
+    : `menu/${randomUUID()}.${extension}`;
 
   const uploadUrl = await getSignedUrl(
     s3,

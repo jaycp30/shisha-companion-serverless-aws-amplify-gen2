@@ -29,6 +29,8 @@ export interface DrinkPairing {
 }
 
 export interface MenuAnalysis {
+  /** The venue's name if it was visible on the menu — ties a session to café notes. */
+  store_name?: string | null;
   /** 5-7 picks; the first three are always Best / Safer / Stronger. */
   picks: FlavorPick[];
   avoid: AvoidItem[];

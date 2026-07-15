@@ -6,6 +6,8 @@ interface SessionHudProps {
   session: Session;
   collapsed: boolean;
   onToggle: () => void;
+  /** Waves the cat goodbye and returns to the splash. */
+  onEndSession: () => void;
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
@@ -19,7 +21,7 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function SessionHud({ session, collapsed, onToggle }: SessionHudProps) {
+export function SessionHud({ session, collapsed, onToggle, onEndSession }: SessionHudProps) {
   const { started, elapsedSeconds, coalsSeconds, coalsExpired, recentPuffs } = session;
 
   // Before the coals are lit there is no session to report on — just an invitation to
@@ -122,6 +124,14 @@ export function SessionHud({ session, collapsed, onToggle }: SessionHudProps) {
       <p className="mt-2 text-center text-[11px] text-espresso-soft">
         {recentPuffs} in the last {SESSION_CONFIG.puffWindowSeconds / 60} min
       </p>
+
+      <button
+        type="button"
+        onClick={onEndSession}
+        className="mt-3 w-full rounded-full px-4 py-2 text-xs text-espresso-soft transition hover:bg-petal-soft"
+      >
+        End session
+      </button>
     </aside>
   );
 }

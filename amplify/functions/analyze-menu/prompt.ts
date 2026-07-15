@@ -30,6 +30,8 @@ Then add 2-4 more, choosing roles that genuinely fit this menu, for example:
 Do not invent a role that doesn't suit the menu, and never repeat a flavor across picks.
 
 ALSO RETURN:
+- store_name: the venue's name if it appears anywhere on the menu (header, logo,
+  footer) — the name only, without city or slogan. null if no name is visible.
 - avoid: harsh or gimmicky items, each with a short reason.
 - mixes: 1-3 sensible flavor combinations, each with why it works.
 - drink_pairings: only if the menu lists drinks. Pair one drink per pick
@@ -43,6 +45,7 @@ OUTPUT: Respond with STRICT JSON ONLY. No markdown, no code fences, no prose out
 the JSON. The very first character of your response must be "{" and the last must be "}".
 Never begin with an explanation or commentary. Use exactly this shape:
 {
+  "store_name": string | null,
   "picks": [
     { "label": string, "name": string, "why": string }
   ],

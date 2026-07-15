@@ -1,5 +1,5 @@
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 import {
   ChatError,
   sendChat,
@@ -7,6 +7,11 @@ import {
   type ChatSessionContext,
 } from '../lib/chat';
 import type { MenuAnalysis } from '../types/menu';
+
+// How tall the input may grow before it scrolls internally — about six lines of
+// text-sm/leading-relaxed plus padding. Keeps a long prompt fully visible without
+// letting the composer swallow the conversation above it.
+const MAX_INPUT_HEIGHT_PX = 144;
 
 interface ChatDrawerProps {
   open: boolean;
@@ -16,6 +21,10 @@ interface ChatDrawerProps {
   session: ChatSessionContext;
   /** Lets the mascot switch to its 'talking' clip while a reply is in flight. */
   onTalkingChange: (talking: boolean) => void;
+  /** A question the CAT asks proactively (the café check-in). Planted as an assistant
+      message when the drawer opens; the user's next message becomes a café note. */
+  seedQuestion: string | null;
+  onSeedConsumed: () => void;
 }
 
 /**
@@ -32,6 +41,8 @@ export function ChatDrawer({
   menu,
   session,
   onTalkingChange,
+  seedQuestion,
+  onSeedConsumed,
 }: ChatDrawerProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -40,15 +51,37 @@ export function ChatDrawer({
   const reduceMotion = useReducedMotion();
 
   const endRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  // True while the next user message is the answer to the cat's café question.
+  const captureNextRef = useRef(false);
+
+  // Plant the cat's proactive question as a normal assistant message the first time the
+  // drawer opens while one is pending. The user's reply (their NEXT send) is flagged so
+  // the backend can distill it into an anonymous café note.
+  useEffect(() => {
+    if (!open || !seedQuestion) return;
+    setMessages((current) => [...current, { role: 'assistant', text: seedQuestion }]);
+    captureNextRef.current = true;
+    onSeedConsumed();
+  }, [open, seedQuestion, onSeedConsumed]);
 
   // Keep the newest message in view as the conversation grows.
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, sending]);
 
-  async function handleSubmit(event: FormEvent): Promise<void> {
-    event.preventDefault();
+  // Grow the input with its content so a long prompt stays fully visible, capped at
+  // ~6 lines (it scrolls internally past that). Measured by hand because the CSS
+  // `field-sizing: content` shortcut doesn't exist in Firefox. Keying the effect on
+  // `input` also collapses the box back to one line when send() clears it.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, MAX_INPUT_HEIGHT_PX)}px`;
+  }, [input]);
 
+  async function send(): Promise<void> {
     const text = input.trim();
     if (!text || sending) return;
 
@@ -61,8 +94,13 @@ export function ChatDrawer({
     setSending(true);
     onTalkingChange(true);
 
+    // Consume the capture flag whatever happens — a failed send shouldn't leave the
+    // NEXT unrelated message being stored as a café note.
+    const captureNote = captureNextRef.current;
+    captureNextRef.current = false;
+
     try {
-      const reply = await sendChat(history, menu, session);
+      const reply = await sendChat(history, menu, session, { captureNote });
       setMessages([...history, { role: 'assistant', text: reply }]);
     } catch (err) {
       setError(
@@ -73,6 +111,21 @@ export function ChatDrawer({
     } finally {
       setSending(false);
       onTalkingChange(false);
+    }
+  }
+
+  function handleSubmit(event: FormEvent): void {
+    event.preventDefault();
+    void send();
+  }
+
+  // Enter sends; Shift+Enter inserts a newline. The isComposing guard matters for IME
+  // input (Japanese etc.): there, Enter confirms the character you're composing, and
+  // without the guard picking a kanji candidate would fire the message off mid-word.
+  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      void send();
     }
   }
 
@@ -113,8 +166,9 @@ export function ChatDrawer({
                 key={`${message.role}-${index}`}
                 className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'}
               >
+                {/* pre-wrap so the newlines a user typed (Shift+Enter) survive rendering. */}
                 <p
-                  className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+                  className={`max-w-[85%] whitespace-pre-wrap break-words rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
                     message.role === 'user'
                       ? 'bg-petal text-espresso'
                       : 'border border-petal bg-linen text-espresso'
@@ -140,13 +194,18 @@ export function ChatDrawer({
             <div ref={endRef} />
           </div>
 
-          <form onSubmit={handleSubmit} className="flex gap-2 border-t border-petal p-4">
-            <input
+          {/* items-end keeps the Send button pinned to the bottom row while the
+              textarea grows upward. */}
+          <form onSubmit={handleSubmit} className="flex items-end gap-2 border-t border-petal p-4">
+            <textarea
+              ref={inputRef}
               value={input}
               onChange={(event) => setInput(event.target.value)}
-              placeholder="Say something…"
+              onKeyDown={handleKeyDown}
+              rows={1}
+              placeholder="Say something… (Shift+Enter for a new line)"
               aria-label="Message"
-              className="min-w-0 flex-1 rounded-full border border-petal bg-linen px-4 py-2.5 text-sm text-espresso outline-none placeholder:text-espresso-soft focus:border-espresso-soft"
+              className="min-w-0 flex-1 resize-none overflow-y-auto rounded-2xl border border-petal bg-linen px-4 py-2.5 text-sm leading-relaxed text-espresso outline-none placeholder:text-espresso-soft focus:border-espresso-soft"
             />
             <button
               type="submit"
