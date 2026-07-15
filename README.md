@@ -96,8 +96,19 @@ npx ampx sandbox secret set TURNSTILE_SECRET_KEY
 npx ampx sandbox secret set SESSION_TOKEN_SECRET
 ```
 
-For the branch env, set the same two names in the Amplify console
-(**Hosting → Secrets**) before pushing this feature — deploys fail if they're missing.
+For the branch env, set the same two names in the Amplify console under
+**Hosting → Secrets** (the "Manage secrets" page) before deploying — deploys fail if
+they're missing.
+
+> **Don't confuse Secrets with Environment variables.** The code reads these two via
+> `secret('…')`, which only sees the **Secrets** store — putting them in *Environment
+> variables* leaves them invisible and the backend synth fails. The split for this feature:
+>
+> | Name | Amplify console location |
+> |---|---|
+> | `VITE_TURNSTILE_SITE_KEY` | **Environment variables** (public, build-time) |
+> | `TURNSTILE_SECRET_KEY` | **Secrets** |
+> | `SESSION_TOKEN_SECRET` | **Secrets** |
 
 ## Deploying to AWS (Amplify Gen 2)
 
@@ -154,6 +165,23 @@ console (see [why it isn't in IaC](#why-the-repo-connection-isnt-in-cloudformati
 
 6. **Save and deploy.** ~10–15 minutes: it deploys the whole Gen 2 backend, *then*
    builds the frontend. Every later push to `main` repeats both.
+
+### Triggering (or skipping) a deploy
+
+A push to `main` normally builds and deploys. To **skip** the build on a given push
+(e.g. a commit that needs new secrets set in the console first), put `[skip-cd]` on the
+last line of the commit message.
+
+To then **force a deploy without a code change** — after setting those secrets, or to
+re-run the last build — push an empty commit:
+
+```bash
+git commit --allow-empty -m "chore: trigger prod deploy"
+git push
+```
+
+Its message has no `[skip-cd]`, so Amplify runs a full build and carries up any earlier
+`[skip-cd]` commits with it. (Equivalent to "Redeploy this version" in the console.)
 
 ### Why the repo connection isn't in CloudFormation
 
