@@ -282,6 +282,21 @@ function App() {
             </div>
           )}
         </ErrorBoundary>
+
+        {/* Colophon. Lives at the foot of the content column rather than in the fixed
+            top-left row: it's about the project, not a control you use during a session,
+            and this is where people look for it. Inside the column on purpose, so it
+            inherits the zen-mode fade — zen is for watching the room, not reading credits. */}
+        <footer className="mt-16 border-t border-petal pt-6 text-center text-xs text-espresso-soft">
+          <a
+            href="https://github.com/jaycp30/shisha-companion-serverless-aws-amplify-gen2"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline underline-offset-4 transition hover:text-espresso"
+          >
+            Source on GitHub
+          </a>
+        </footer>
       </div>
 
       <SessionHud
