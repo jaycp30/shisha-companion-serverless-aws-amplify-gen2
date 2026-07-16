@@ -32,6 +32,9 @@ export function NearbyCafes({ isCurator }: NearbyCafesProps) {
   const [suggesting, setSuggesting] = useState(false);
   const [suggested, setSuggested] = useState(false);
   const [suggestError, setSuggestError] = useState('');
+  // Link to the filed note, so the curator can track it — or map it and close it
+  // themselves. Null when OSM's response didn't give us an id; the note still posted.
+  const [suggestedUrl, setSuggestedUrl] = useState<string | null>(null);
 
   function resetSuggest(): void {
     setSuggestName('');
@@ -39,6 +42,7 @@ export function NearbyCafes({ isCurator }: NearbyCafesProps) {
     setSuggesting(false);
     setSuggested(false);
     setSuggestError('');
+    setSuggestedUrl(null);
   }
 
   async function runSearch(getOrigin: () => Promise<GeoPoint>): Promise<void> {
@@ -73,7 +77,8 @@ export function NearbyCafes({ isCurator }: NearbyCafesProps) {
     setSuggesting(true);
     setSuggestError('');
     try {
-      await suggestLounge(origin, suggestName);
+      const note = await suggestLounge(origin, suggestName);
+      setSuggestedUrl(note.url);
       setSuggested(true);
       setConfirming(false);
     } catch (err) {
@@ -199,10 +204,22 @@ export function NearbyCafes({ isCurator }: NearbyCafesProps) {
               {canSuggest && (
                 <div className="mt-5 rounded-xl border border-dashed border-petal p-4">
                   {suggested ? (
-                    <p className="text-sm text-espresso-soft" role="status">
-                      Thanks! 🐾 Your suggestion was sent to OpenStreetMap — a mapper will
-                      review it before it appears.
-                    </p>
+                    <div role="status">
+                      <p className="text-sm text-espresso-soft">
+                        Thanks! 🐾 Your suggestion was sent to OpenStreetMap — a mapper
+                        reviews it before it appears.
+                      </p>
+                      {suggestedUrl && (
+                        <a
+                          href={suggestedUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-2 inline-block text-xs font-medium text-espresso underline underline-offset-2"
+                        >
+                          Track your note on OpenStreetMap →
+                        </a>
+                      )}
+                    </div>
                   ) : (
                     <>
                       <p className="text-sm font-medium">Here but not on the map?</p>

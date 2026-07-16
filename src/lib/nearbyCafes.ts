@@ -159,6 +159,23 @@ export function mapsLink(cafe: Cafe): string {
   return `https://www.openstreetmap.org/?mlat=${cafe.lat}&mlon=${cafe.lon}#map=18/${cafe.lat}/${cafe.lon}`;
 }
 
+export interface SuggestedNote {
+  /**
+   * The note's page on OpenStreetMap, so the reporter can follow it, answer a mapper's
+   * question, or map it themselves and close it. Null when the response could not be
+   * parsed — the note still posted, we just can't link to it.
+   */
+  url: string | null;
+}
+
+// The API host and the human-facing site are different for live OSM (api. vs www.), but
+// the same host on the dev sandbox. Derive one from the other so a note link always
+// points at the server the note was actually filed on.
+function noteWebUrl(noteId: number): string {
+  const site = OSM_API_BASE.replace('//api.openstreetmap.org', '//www.openstreetmap.org');
+  return `${site}/note/${noteId}`;
+}
+
 /**
  * Post an anonymous OSM "note" suggesting a lounge at the given point — a lightweight
  * "someone should map this here" flag a real mapper reviews, NOT a direct edit to the map.
@@ -168,7 +185,7 @@ export function mapsLink(cafe: Cafe): string {
  * `point` MUST be a device fix — a suggestion is only meaningful when the user is
  * physically at the venue, and only a good-enough fix may place it.
  */
-export async function suggestLounge(point: GeoPoint, name: string): Promise<void> {
+export async function suggestLounge(point: GeoPoint, name: string): Promise<SuggestedNote> {
   const cleanName = name.trim();
   if (cleanName.length === 0) {
     throw new NearbyError('Give the lounge a name first.');
@@ -184,10 +201,19 @@ export async function suggestLounge(point: GeoPoint, name: string): Promise<void
     );
   }
 
+  // Everything a reviewing mapper needs to judge this without having been there: what it
+  // is, when it was seen, and — the part that decides whether they trust the pin — how
+  // precise the fix was. We already compute the accuracy to gate the submission above;
+  // withholding it from the note just makes the reviewer guess.
+  const observedOn = new Date().toISOString().slice(0, 10);
+  const fix =
+    point.accuracyMeters !== undefined
+      ? `device GPS fix, accurate to ~${Math.round(point.accuracyMeters)} m`
+      : 'device GPS fix';
   const text =
     `Possible shisha / hookah lounge here: "${cleanName}". ` +
-    `Reported by a visitor on-site via the Shisha Companion app — please verify before ` +
-    `mapping (suggested tag: amenity=hookah_lounge).`;
+    `Reported on-site by a visitor via the Shisha Companion app on ${observedOn} (${fix}). ` +
+    `Please verify before mapping (suggested tag: amenity=hookah_lounge).`;
 
   const url =
     `${OSM_API_BASE}/api/0.6/notes.json` +
@@ -203,5 +229,15 @@ export async function suggestLounge(point: GeoPoint, name: string): Promise<void
   }
   if (!res.ok) {
     throw new NearbyError(`OpenStreetMap rejected the suggestion (HTTP ${res.status}).`);
+  }
+
+  // The note is already filed by this point, so a malformed/unreadable body is NOT a
+  // failure — degrade to "posted, but no link" rather than telling the user it broke.
+  try {
+    const body: unknown = await res.json();
+    const id = (body as { properties?: { id?: unknown } })?.properties?.id;
+    return { url: typeof id === 'number' ? noteWebUrl(id) : null };
+  } catch {
+    return { url: null };
   }
 }
