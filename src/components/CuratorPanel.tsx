@@ -105,105 +105,114 @@ export function CuratorPanel({ curator, onChange }: CuratorPanelProps) {
     );
   }
 
-  if (!open) {
-    return (
+  const isNewPassword = step === 'newPassword';
+
+  // The trigger stays mounted while the form is open, and the form hangs off it as an
+  // absolute dropdown. Two reasons: this now sits in the top-left row beside the brand
+  // mark and zen toggle, so a 16rem form as a flex child would shove them sideways the
+  // moment it opened; and swapping the trigger out for the form would collapse the row's
+  // layout underneath it.
+  return (
+    <div className="relative">
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        aria-expanded={open}
+        onClick={() => {
+          if (open) reset();
+          setOpen(!open);
+        }}
         className="control-halo text-xs tracking-wide text-espresso/50 transition hover:text-espresso"
       >
         Curator
       </button>
-    );
-  }
 
-  const isNewPassword = step === 'newPassword';
-
-  return (
-    <form
-      onSubmit={isNewPassword ? handleNewPassword : handleSignIn}
-      className="w-64 rounded-2xl bg-linen/95 p-4 text-sm shadow-sm backdrop-blur-sm"
-    >
-      <p className="mb-3 text-xs text-espresso/60">
-        {isNewPassword
-          ? 'Set a new password to finish signing in.'
-          : 'Curator sign-in — invite only.'}
-      </p>
-
-      {!isNewPassword && (
-        <>
-          <label className="sr-only" htmlFor="curator-email">
-            Email
-          </label>
-          <input
-            id="curator-email"
-            type="email"
-            required
-            autoComplete="username"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
-            className="mb-2 w-full rounded-lg border border-espresso/15 bg-white/70 px-3 py-2 text-espresso outline-none focus:border-espresso/40"
-          />
-          <label className="sr-only" htmlFor="curator-password">
-            Password
-          </label>
-          <input
-            id="curator-password"
-            type="password"
-            required
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Password"
-            className="mb-2 w-full rounded-lg border border-espresso/15 bg-white/70 px-3 py-2 text-espresso outline-none focus:border-espresso/40"
-          />
-        </>
-      )}
-
-      {isNewPassword && (
-        <>
-          <label className="sr-only" htmlFor="curator-new-password">
-            New password
-          </label>
-          <input
-            id="curator-new-password"
-            type="password"
-            required
-            autoComplete="new-password"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            placeholder="New password"
-            className="mb-2 w-full rounded-lg border border-espresso/15 bg-white/70 px-3 py-2 text-espresso outline-none focus:border-espresso/40"
-          />
-        </>
-      )}
-
-      {error && (
-        <p role="alert" className="mb-2 text-xs text-red-800">
-          {error}
-        </p>
-      )}
-
-      <div className="flex gap-2">
-        <button
-          type="submit"
-          disabled={busy}
-          className="flex-1 rounded-full bg-petal px-3 py-2 text-xs font-medium text-espresso transition hover:brightness-95 disabled:opacity-60"
+      {open && (
+        <form
+          onSubmit={isNewPassword ? handleNewPassword : handleSignIn}
+          className="absolute left-0 top-full z-40 mt-2 w-64 rounded-2xl bg-linen/95 p-4 text-sm shadow-sm backdrop-blur-sm"
         >
-          {busy ? 'Working…' : isNewPassword ? 'Set password' : 'Sign in'}
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setOpen(false);
-            reset();
-          }}
-          className="rounded-full px-3 py-2 text-xs text-espresso/60 hover:text-espresso"
-        >
-          Cancel
-        </button>
-      </div>
-    </form>
+          <p className="mb-3 text-xs text-espresso/60">
+            {isNewPassword
+              ? 'Set a new password to finish signing in.'
+              : 'Curator sign-in — invite only.'}
+          </p>
+
+          {!isNewPassword && (
+            <>
+              <label className="sr-only" htmlFor="curator-email">
+                Email
+              </label>
+              <input
+                id="curator-email"
+                type="email"
+                required
+                autoComplete="username"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                className="mb-2 w-full rounded-lg border border-espresso/15 bg-white/70 px-3 py-2 text-espresso outline-none focus:border-espresso/40"
+              />
+              <label className="sr-only" htmlFor="curator-password">
+                Password
+              </label>
+              <input
+                id="curator-password"
+                type="password"
+                required
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Password"
+                className="mb-2 w-full rounded-lg border border-espresso/15 bg-white/70 px-3 py-2 text-espresso outline-none focus:border-espresso/40"
+              />
+            </>
+          )}
+
+          {isNewPassword && (
+            <>
+              <label className="sr-only" htmlFor="curator-new-password">
+                New password
+              </label>
+              <input
+                id="curator-new-password"
+                type="password"
+                required
+                autoComplete="new-password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="New password"
+                className="mb-2 w-full rounded-lg border border-espresso/15 bg-white/70 px-3 py-2 text-espresso outline-none focus:border-espresso/40"
+              />
+            </>
+          )}
+
+          {error && (
+            <p role="alert" className="mb-2 text-xs text-red-800">
+              {error}
+            </p>
+          )}
+
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              disabled={busy}
+              className="flex-1 rounded-full bg-petal px-3 py-2 text-xs font-medium text-espresso transition hover:brightness-95 disabled:opacity-60"
+            >
+              {busy ? 'Working…' : isNewPassword ? 'Set password' : 'Sign in'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                reset();
+              }}
+              className="rounded-full px-3 py-2 text-xs text-espresso/60 hover:text-espresso"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+    </div>
   );
 }

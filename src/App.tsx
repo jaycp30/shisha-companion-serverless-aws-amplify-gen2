@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { AudioControls } from './components/AudioControls';
 import { BackgroundVideo } from './components/BackgroundVideo';
 import { ChatDrawer } from './components/ChatDrawer';
+import { BrandMark } from './components/BrandMark';
 import { ClickSpark } from './components/ClickSpark';
 import { CuratorPanel } from './components/CuratorPanel';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { HeroTitle } from './components/HeroTitle';
 import { MascotDock } from './components/MascotDock';
 import { MenuUpload } from './components/MenuUpload';
 import { NearbyCafes } from './components/NearbyCafes';
@@ -201,27 +203,33 @@ function App() {
       <BackgroundVideo scene="lounge-hero" unwashed={zenMode} />
       <AudioControls audio={audio} />
 
-      {/* Zen mode toggle — top-left, the one corner the other fixed controls left free
-          (audio top-right, HUD bottom-left, mascot bottom-right). */}
-      <button
-        type="button"
-        aria-pressed={zenMode}
-        aria-label={zenMode ? 'Leave zen mode' : 'Enter zen mode (hide the cards)'}
-        onClick={() => setZenMode((zen) => !zen)}
-        className="control-halo fixed left-4 top-4 z-30 text-xs tracking-wide text-espresso/70 transition hover:text-espresso"
-      >
-        {zenMode ? 'Zen off' : 'Zen'}
-      </button>
+      {/* Top-left row: the docked brand mark, then the controls. One line of plain text
+          in the only corner the others left free (audio top-right, HUD bottom-left,
+          mascot bottom-right). BrandMark grows from zero width as you scroll, which is
+          what slides the controls right to make room for it. */}
+      <div className="fixed left-4 top-4 z-30 flex items-center gap-3">
+        <BrandMark />
 
-      {/* Curator sign-in, tucked under the zen pill. Fades with zen mode — it's a
-          utility, and a login form has no place in a "just watch the room" view. */}
-      <div
-        aria-hidden={zenMode}
-        className={`fixed left-4 top-10 z-30 transition-opacity duration-500 ${
-          zenMode ? 'pointer-events-none opacity-0' : 'opacity-100'
-        }`}
-      >
-        <CuratorPanel curator={curator} onChange={setCurator} />
+        <button
+          type="button"
+          aria-pressed={zenMode}
+          aria-label={zenMode ? 'Leave zen mode' : 'Enter zen mode (hide the cards)'}
+          onClick={() => setZenMode((zen) => !zen)}
+          className="control-halo shrink-0 text-xs tracking-wide text-espresso/70 transition hover:text-espresso"
+        >
+          {zenMode ? 'Zen off' : 'Zen'}
+        </button>
+
+        {/* Fades with zen mode — a login form has no place in a "just watch the room"
+            view. The zen toggle itself must stay: it's the way back out. */}
+        <div
+          aria-hidden={zenMode}
+          className={`shrink-0 transition-opacity duration-500 ${
+            zenMode ? 'pointer-events-none opacity-0' : 'opacity-100'
+          }`}
+        >
+          <CuratorPanel curator={curator} onChange={setCurator} />
+        </div>
       </div>
 
       {/* With the chat docked on the right (desktop only), the content slides left and
@@ -233,12 +241,7 @@ function App() {
           chatOpen ? 'mx-auto max-w-3xl lg:mx-0 lg:ml-16 lg:max-w-2xl' : 'mx-auto max-w-3xl'
         } ${zenMode ? 'pointer-events-none opacity-0' : 'opacity-100'}`}
       >
-        <header className="mb-10">
-          <h1 className="text-5xl font-semibold tracking-tight">Shisha Companion</h1>
-          <p className="mt-3 text-lg text-espresso-soft">
-            Snap a menu, get flavor picks, and hang out with your session buddy.
-          </p>
-        </header>
+        <HeroTitle />
 
         <ErrorBoundary>
           <div className="mb-6">
