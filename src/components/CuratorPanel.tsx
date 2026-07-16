@@ -90,14 +90,14 @@ export function CuratorPanel({ curator, onChange }: CuratorPanelProps) {
 
   if (curator) {
     return (
-      <div className="flex items-center gap-2 rounded-full bg-linen/80 px-3 py-1.5 text-xs backdrop-blur-sm">
+      <div className="control-halo flex items-center gap-3 text-xs tracking-wide">
         <span className="text-espresso/70" title={curator.email}>
           Curator ✓
         </span>
         <button
           type="button"
           onClick={handleSignOut}
-          className="rounded-full px-2 py-0.5 text-espresso/60 underline-offset-2 hover:text-espresso hover:underline"
+          className="text-espresso/50 underline-offset-2 transition hover:text-espresso hover:underline"
         >
           Sign out
         </button>
@@ -110,7 +110,7 @@ export function CuratorPanel({ curator, onChange }: CuratorPanelProps) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="rounded-full bg-linen/60 px-3 py-1.5 text-xs text-espresso/50 backdrop-blur-sm transition hover:bg-linen/80 hover:text-espresso"
+        className="control-halo text-xs tracking-wide text-espresso/50 transition hover:text-espresso"
       >
         Curator
       </button>

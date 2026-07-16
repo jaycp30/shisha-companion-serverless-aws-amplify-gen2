@@ -15,6 +15,16 @@
   --font-sans: system-ui, "Segoe UI", Roboto, sans-serif;
 }
 
+/* Bare text controls (zen toggle, curator link) sit directly on the background video
+   with no card behind them. A soft linen halo is what keeps them readable across an
+   arbitrary frame — most of all in zen mode, where the readability wash is gone and
+   the video plays at full contrast. Cheaper than reintroducing a chip. */
+@utility control-halo {
+  text-shadow:
+    0 1px 3px rgb(245 240 230 / 0.95),
+    0 0 10px rgb(245 240 230 / 0.7);
+}
+
 html,
 body,
 #root {

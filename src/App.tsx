@@ -208,20 +208,16 @@ function App() {
         aria-pressed={zenMode}
         aria-label={zenMode ? 'Leave zen mode' : 'Enter zen mode (hide the cards)'}
         onClick={() => setZenMode((zen) => !zen)}
-        className={`fixed left-4 top-4 z-30 rounded-full border border-petal px-3 py-1.5 text-xs backdrop-blur-sm transition ${
-          zenMode
-            ? 'bg-espresso text-cream hover:brightness-110'
-            : 'bg-cream/95 text-espresso hover:bg-petal-soft'
-        }`}
+        className="control-halo fixed left-4 top-4 z-30 text-xs tracking-wide text-espresso/70 transition hover:text-espresso"
       >
-        {zenMode ? '🍃 Zen off' : '🍃 Zen'}
+        {zenMode ? 'Zen off' : 'Zen'}
       </button>
 
       {/* Curator sign-in, tucked under the zen pill. Fades with zen mode — it's a
           utility, and a login form has no place in a "just watch the room" view. */}
       <div
         aria-hidden={zenMode}
-        className={`fixed left-4 top-16 z-30 transition-opacity duration-500 ${
+        className={`fixed left-4 top-10 z-30 transition-opacity duration-500 ${
           zenMode ? 'pointer-events-none opacity-0' : 'opacity-100'
         }`}
       >
