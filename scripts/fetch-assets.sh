@@ -42,11 +42,19 @@ greeting:hf_20260714_101910_323984b4-dcfb-4743-a8c1-42e37fdf58b9.mp4
 goodbye:hf_20260714_101918_70a8e5de-8346-400a-872f-5dba12ad1bba.mp4
 "
 
-# Background loops (5s). lounge-hero is the approved default scene.
+# Background loops, as `name:remote:encode-width`.
+#
+# lounge-hero is the ONLY scene the app renders (App.tsx + Splash.tsx), and it is the
+# one clip regenerated at Kling's 1080p option — the original 5s clip used the model's
+# 720p DEFAULT, which is the real reason it looked soft. Native 1080p beats upscaling
+# that 720p master, so it encodes at 1920.
+#
+# The other two are still 720p-era masters (~1284 wide) and nothing renders them.
+# Scaling those UP here would only spend bits blurring a small source, so they stay 1280.
 BACKGROUNDS="
-lounge-hero:hf_20260712_190025_7a319dfe-4907-411f-ab94-c606a4f849ca.mp4
-lounge-normal:hf_20260712_152524_d283f883-d9f4-448f-82da-76853c31117a.mp4
-village-dusk:hf_20260712_151949_66a28578-a374-414f-8dc6-26f87b1d07d1.mp4
+lounge-hero:hf_20260716_122147_6d7c7f1b-ecf0-41db-bfb2-eceee5e252af.mp4:1920
+lounge-normal:hf_20260712_152524_d283f883-d9f4-448f-82da-76853c31117a.mp4:1280
+village-dusk:hf_20260712_151949_66a28578-a374-414f-8dc6-26f87b1d07d1.mp4:1280
 "
 
 # Reference stills — used as <video poster> images while a clip loads.
@@ -55,14 +63,20 @@ cat-master:hf_20260712_143216_52811f80-733e-468d-a78c-08f33479b0c3.png
 lounge-master:hf_20260712_185648_e607fd6e-3d6c-49fb-a616-e933696c9540.png
 "
 
+# Cache is keyed on the REMOTE id, not just the local filename. Re-pointing a clip at a
+# new generation (a re-roll, a higher-res render) must invalidate the cache — keying on
+# the local name alone would print "have lounge-hero" and silently keep serving the old
+# download forever, which is a very quiet way to ship the wrong video.
 download() {
   local name="$1" remote="$2" dir="$3"
   local out="$dir/$name.${remote##*.}"
-  if [ -f "$out" ]; then
+  local stamp="$dir/$name.src"
+  if [ -f "$out" ] && [ "$(cat "$stamp" 2>/dev/null)" = "$remote" ]; then
     echo "  have    $name"
   else
     echo "  fetch   $name"
     curl -fsS "$CDN/$remote" -o "$out"
+    printf '%s' "$remote" > "$stamp"
   fi
 }
 
@@ -116,12 +130,19 @@ while IFS=: read -r name remote; do
 done <<< "$MASCOT"
 echo ""
 
+# CRF 20, not the 30 this used to be. The old value assumed the background always sat
+# under a dim linen wash that hid the artifacts — zen mode now fades that wash away and
+# plays the clip at full contrast, so that compression became visible. 330 kbps was
+# throwing away 95% of the master's bitrate; CRF 20 costs ~1.9 MB and is the app's
+# primary visual, so it earns the bytes.
+BG_CRF=20
+
 echo "== Backgrounds =="
-while IFS=: read -r name remote; do
+while IFS=: read -r name remote width; do
   [ -z "$name" ] && continue
   download "$name" "$remote" "$RAW"
-  encode_clip "$RAW/$name.mp4" "$OUT/bg/$name.mp4" 1280 30
-  echo "  encode  $name.mp4"
+  encode_clip "$RAW/$name.mp4" "$OUT/bg/$name.mp4" "$width" "$BG_CRF"
+  echo "  encode  $name.mp4 (${width}w)"
 done <<< "$BACKGROUNDS"
 echo ""
 

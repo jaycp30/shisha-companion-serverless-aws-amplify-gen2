@@ -76,12 +76,33 @@ cat could move. Sizing each asset to how it is actually *displayed* took the set
 | Set | Encoding | Why |
 |---|---|---|
 | Mascot | 480px wide; VP9-alpha CRF 36 + HEVC-alpha | Renders ~250px wide. Transparent (see above) |
-| Backgrounds | 1280px wide, CRF 30 | Sits behind a dim overlay — bitrate was the only problem |
+| Backgrounds | `lounge-hero` 1920px, others 1280px; CRF 20 | Full-bleed and, in **zen mode**, shown with no wash over it (see below) |
 | Stills | JPEG @ 960px | 1–3 MB PNGs become ~120 KB posters |
 | BGM | 96 kbps | Ambient music at low volume; the 320 kbps sources were pure waste |
 
 Audio is stripped from every clip (`-an`) — the source clips carry junk
 AI-generated audio.
+
+### The background is not "behind a dim overlay" any more
+
+That sentence used to justify encoding the backgrounds at CRF 30, and it was true: a
+`bg-linen/70` wash sat over the video and hid the artifacts. **Zen mode fades that wash
+away**, so the clip now plays at full contrast and the compression became obvious —
+330 kbps was throwing away 95% of a 6.4 Mbps master. Hence CRF 20.
+
+`lounge-hero` is also regenerated at Kling's **1080p** option. The first version used the
+model's `720p` *default*, which is the whole reason it looked soft — the ceiling was a
+generation parameter, not a limit. Native 1080p beats AI-upscaling that 720p master.
+It is the only scene the app renders (`App.tsx`, `Splash.tsx`), so it is the only one
+worth the extra width; the other two would just blur if scaled up from their 720p-era
+sources.
+
+> **Two anomalies in this scene are inherited from the start image, not the video:** the
+> red adventurer's hose connects to nothing, and the cats barely move. The clip is
+> generated image-to-video from `lounge-master.png` with "preserve the exact composition
+> of the source image", so **a video re-roll cannot fix the hose** — the still would have
+> to be fixed first. The stillness is deliberate: characters that move don't return to
+> their starting pose, and the loop seam becomes visible every few seconds.
 
 > **ffmpeg + bash gotcha:** the encode loop passes `-nostdin`. Without it, ffmpeg reads
 > from stdin, eats the `while read` loop's input, and silently truncates filenames.
