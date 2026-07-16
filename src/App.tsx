@@ -142,6 +142,20 @@ function App() {
     setOneShot('smoking');
   }
 
+  // The cat is a big, inviting tap target, and before the session starts the natural
+  // reason to touch it is to pet it — not to report a puff you haven't taken. Logging
+  // one here would silently start BOTH clocks, contradicting the HUD's own "the clocks
+  // start when you light up" and quietly bypassing 'Light the coals'. So: pet before
+  // the session, log after. (The HUD's own 'Log a puff' button only exists once
+  // started, so this was the one way to log a phantom puff.)
+  function handleMascotTap(): void {
+    if (!session.started) {
+      setOneShot('happy');
+      return;
+    }
+    logPuffWithSmoke();
+  }
+
   // Changing the coals plays 'goodbye' (the cat waves off the spent coals). Only on a
   // RE-light: the first light is the session starting, not a farewell to anything.
   function lightCoalsWithGoodbye(): void {
@@ -293,7 +307,8 @@ function App() {
         notice={session.notice ?? cafeBubbleNotice}
         chatOpen={chatOpen}
         onClipEnd={handleClipEnd}
-        onTap={logPuffWithSmoke}
+        onTap={handleMascotTap}
+        tapLabel={session.started ? 'Log a puff' : 'Pet the cat'}
         onDismissNotice={
           session.notice ? session.dismissNotice : () => setCafeBubbleOpen(false)
         }

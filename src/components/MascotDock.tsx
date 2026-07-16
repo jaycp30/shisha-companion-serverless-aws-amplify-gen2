@@ -9,6 +9,8 @@ interface MascotDockProps {
   chatOpen: boolean;
   onClipEnd: () => void;
   onTap: () => void;
+  /** What the tap does right now — see Mascot. */
+  tapLabel: string;
   onDismissNotice: () => void;
   onOpenChat: () => void;
 }
@@ -27,6 +29,7 @@ export function MascotDock({
   chatOpen,
   onClipEnd,
   onTap,
+  tapLabel,
   onDismissNotice,
   onOpenChat,
 }: MascotDockProps) {
@@ -38,7 +41,7 @@ export function MascotDock({
     >
       <MascotBubble notice={notice} onDismiss={onDismissNotice} />
 
-      <Mascot state={state} onClipEnd={onClipEnd} onTap={onTap} />
+      <Mascot state={state} onClipEnd={onClipEnd} onTap={onTap} tapLabel={tapLabel} />
 
       {!chatOpen && (
         <button

@@ -10,8 +10,14 @@ interface MascotProps {
   state: MascotState;
   /** Fires when a non-looping clip finishes. The parent decides what plays next. */
   onClipEnd: () => void;
-  /** Tapping the cat logs a puff. */
+  /** What a tap does depends on the session — App decides. */
   onTap: () => void;
+  /**
+   * Describes what the tap will actually do right now ("Pet the cat" before the session
+   * starts, "Log a puff" after). The cat is a real button, so this label is the only
+   * thing telling a screen-reader user what pressing it does — it must track behaviour.
+   */
+  tapLabel: string;
 }
 
 /**
@@ -24,7 +30,7 @@ interface MascotProps {
  *  - It does not position itself. MascotDock owns placement, so the cat, its speech
  *    bubble, and the chat button can move as one unit.
  */
-export function Mascot({ state, onClipEnd, onTap }: MascotProps) {
+export function Mascot({ state, onClipEnd, onTap, tapLabel }: MascotProps) {
   // Warm the HTTP cache for clips we'll likely need soon, so a state change swaps
   // instantly instead of freezing while a clip downloads.
   //
@@ -43,7 +49,7 @@ export function Mascot({ state, onClipEnd, onTap }: MascotProps) {
   const sources = mascotSources(state);
 
   return (
-    <button type="button" onClick={onTap} aria-label="Log a puff" className="w-full cursor-pointer">
+    <button type="button" onClick={onTap} aria-label={tapLabel} className="w-full cursor-pointer">
       {/* key={state} remounts the element on a state change. A <video> with <source>
           children does not swap clips when the children change — remounting forces it,
           and autoPlay then starts the new clip. */}
