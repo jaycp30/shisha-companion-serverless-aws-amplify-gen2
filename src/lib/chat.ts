@@ -35,13 +35,15 @@ interface SendChatOptions {
   /** Marks this message as the reply to the cat's café question — the backend distills
       it into an anonymous note other visitors' cats can draw on. */
   captureNote?: boolean;
+  /** Send as a signed-in curator, so any note captured is recorded as verified. */
+  asCurator?: boolean;
 }
 
 export async function sendChat(
   messages: ChatMessage[],
   menu: MenuAnalysis | null,
   session: ChatSessionContext,
-  { captureNote }: SendChatOptions = {},
+  { captureNote, asCurator }: SendChatOptions = {},
 ): Promise<string> {
   const args = {
     messagesJson: JSON.stringify(messages.slice(-MAX_HISTORY_SENT)),
@@ -52,19 +54,24 @@ export async function sendChat(
     captureNote,
   };
 
-  let response = await client.queries.chat({
-    ...args,
-    sessionToken: await getSessionToken(),
-  });
+  // Curators call through Cognito so AppSync populates the Lambda's `identity` — that
+  // authenticated context, not any argument we could send, is what earns a note its
+  // verified mark. Anonymous visitors keep using the default API key.
+  const options = asCurator ? ({ authMode: 'userPool' } as const) : undefined;
+
+  let response = await client.queries.chat(
+    { ...args, sessionToken: await getSessionToken() },
+    options,
+  );
 
   // A rejected session token is self-healing: mint a fresh one (may re-run the
   // invisible Turnstile check) and retry ONCE. Any other error falls through as-is.
   if (response.errors?.some((e) => e.message.includes(SESSION_EXPIRED_MARKER))) {
     invalidateSessionToken();
-    response = await client.queries.chat({
-      ...args,
-      sessionToken: await getSessionToken(),
-    });
+    response = await client.queries.chat(
+      { ...args, sessionToken: await getSessionToken() },
+      options,
+    );
   }
 
   if (response.errors?.length || !response.data) {

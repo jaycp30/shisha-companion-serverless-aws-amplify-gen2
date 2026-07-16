@@ -3,6 +3,7 @@ import { AudioControls } from './components/AudioControls';
 import { BackgroundVideo } from './components/BackgroundVideo';
 import { ChatDrawer } from './components/ChatDrawer';
 import { ClickSpark } from './components/ClickSpark';
+import { CuratorPanel } from './components/CuratorPanel';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { MascotDock } from './components/MascotDock';
 import { MenuUpload } from './components/MenuUpload';
@@ -26,6 +27,7 @@ import { useAudio } from './hooks/useAudio';
 import { useSession } from './hooks/useSession';
 import type { Stage } from './lib/analyzeMenu';
 import type { ChatSessionContext } from './lib/chat';
+import { currentCurator, type CuratorUser } from './lib/curator';
 import { isNotAMenu, type MenuResponse } from './types/menu';
 
 function App() {
@@ -43,6 +45,16 @@ function App() {
   // enjoyed. The column stays mounted — an in-flight analysis or accumulated menu
   // state must survive the fade — it just becomes invisible and unclickable.
   const [zenMode, setZenMode] = useState(false);
+
+  // The signed-in curator, if any. Null is the normal case — this app is
+  // anonymous-first and everything works without ever signing in.
+  const [curator, setCurator] = useState<CuratorUser | null>(null);
+
+  // Restore an existing Cognito session on load, so a curator isn't asked to sign in
+  // again on every refresh.
+  useEffect(() => {
+    void currentCurator().then(setCurator);
+  }, []);
 
   // The chat drives the HUD out of the way and brings it back — but the manual toggle
   // still works at any time, so opening the chat is a default, not a lock.
@@ -205,6 +217,17 @@ function App() {
         {zenMode ? '🍃 Zen off' : '🍃 Zen'}
       </button>
 
+      {/* Curator sign-in, tucked under the zen pill. Fades with zen mode — it's a
+          utility, and a login form has no place in a "just watch the room" view. */}
+      <div
+        aria-hidden={zenMode}
+        className={`fixed left-4 top-16 z-30 transition-opacity duration-500 ${
+          zenMode ? 'pointer-events-none opacity-0' : 'opacity-100'
+        }`}
+      >
+        <CuratorPanel curator={curator} onChange={setCurator} />
+      </div>
+
       {/* With the chat docked on the right (desktop only), the content slides left and
           narrows rather than hiding behind the panel — so you can keep reading and
           scrolling your recommendations while you talk to the cat. */}
@@ -223,7 +246,7 @@ function App() {
 
         <ErrorBoundary>
           <div className="mb-6">
-            <NearbyCafes />
+            <NearbyCafes isCurator={curator !== null} />
           </div>
 
           <MenuUpload
@@ -263,6 +286,7 @@ function App() {
         onTalkingChange={setIsTalking}
         seedQuestion={cafeSeed}
         onSeedConsumed={() => setCafeSeed(null)}
+        isCurator={curator !== null}
       />
 
       <MascotDock

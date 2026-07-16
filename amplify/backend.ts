@@ -3,6 +3,7 @@ import { RemovalPolicy, Stack, Tags } from 'aws-cdk-lib';
 import { Effect, Policy, PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { StartingPosition, EventSourceMapping, FilterCriteria, FilterRule } from 'aws-cdk-lib/aws-lambda';
 import { AttributeType, BillingMode, Table } from 'aws-cdk-lib/aws-dynamodb';
+import { auth } from './auth/resource';
 import { data } from './data/resource';
 import { storage } from './storage/resource';
 import { getUploadUrl } from './functions/get-upload-url/resource';
@@ -14,6 +15,7 @@ import { FOUNDATION_MODEL_ID, MODEL_ID } from './functions/model';
 // Composition root: register every resource. The returned `backend` object
 // exposes the underlying CDK constructs, which we use below (the "escape hatch").
 const backend = defineBackend({
+  auth,
   data,
   storage,
   getUploadUrl,
@@ -21,6 +23,15 @@ const backend = defineBackend({
   analyzeMenu,
   chat,
 });
+
+// Curator login is invite-only: NOBODY can self-register. Gen 2 has no `defineAuth`
+// option for this, so we reach for the CFN resource directly. Without this the user
+// pool would happily accept public sign-ups, and "verified" notes would mean nothing
+// — anyone could register and mint trust. This single line is what makes the
+// verified tier worth having.
+backend.auth.resources.cfnResources.cfnUserPool.adminCreateUserConfig = {
+  allowAdminCreateUserOnly: true,
+};
 
 // Gen 2 has no `define*` for Bedrock, so grant InvokeModel via raw CDK IAM.
 // Invoking through the jp. inference profile checks access to BOTH the profile

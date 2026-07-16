@@ -66,17 +66,25 @@ const schema = a
       })
       .authorization((allow) => [allow.publicApiKey()]),
 
-    // One anonymous, model-sanitized observation about a venue ("service slows down on
-    // weekends"). Written ONLY by the chat Lambda — clients can read but never write,
-    // which is what keeps a public-API app's shared memory from being spammable
-    // directly. storeKey is the normalized venue name (see chat handler).
+    // One model-sanitized observation about a venue ("service slows down on weekends").
+    // Written ONLY by the chat Lambda — clients can read but never write, which is what
+    // keeps a public-API app's shared memory from being spammable directly.
+    // storeKey is the normalized venue name (see chat handler).
+    //
+    // `verified` marks a note contributed by a signed-in curator. It is set from the
+    // AppSync-authenticated identity inside the Lambda, never from client input — and
+    // since no client can write this model at all, it cannot be forged.
     CafeNote: a
       .model({
         storeKey: a.string().required(),
         note: a.string().required(),
+        verified: a.boolean(),
       })
       .secondaryIndexes((index) => [index('storeKey').queryField('listNotesByStore')])
-      .authorization((allow) => [allow.publicApiKey().to(['read'])]),
+      .authorization((allow) => [
+        allow.publicApiKey().to(['read']),
+        allow.authenticated().to(['read']),
+      ]),
 
     // Companion chat. Transcript + optional menu/session context come in as JSON
     // strings. `storeName` ties the chat to a venue's notes; `captureNote` marks the
@@ -94,7 +102,10 @@ const schema = a
         sessionToken: a.string().required(),
       })
       .returns(a.string())
-      .authorization((allow) => [allow.publicApiKey()])
+      // Both modes: anonymous visitors call this with the API key, curators call it
+      // with their Cognito token. The handler tells them apart via event.identity and
+      // marks the resulting note verified or not — the client never gets a say.
+      .authorization((allow) => [allow.publicApiKey(), allow.authenticated()])
       .handler(a.handler.function(chat)),
   })
   // Let the Lambdas use the data API: analyze-menu writes job results back, chat reads
@@ -107,6 +118,9 @@ export type Schema = ClientSchema<typeof schema>;
 export const data = defineData({
   schema,
   authorizationModes: {
+    // Still apiKey by default: the app is anonymous-first and every public call keeps
+    // working exactly as before. The Cognito user pool is only reached when the client
+    // explicitly asks for it (authMode: 'userPool'), i.e. when a curator is signed in.
     defaultAuthorizationMode: 'apiKey',
     // Max lifetime for an AppSync API key is 365 days — set a calendar reminder
     // to rotate it before then, or the public endpoints stop working.

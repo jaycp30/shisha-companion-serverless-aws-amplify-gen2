@@ -25,6 +25,8 @@ interface ChatDrawerProps {
       message when the drawer opens; the user's next message becomes a café note. */
   seedQuestion: string | null;
   onSeedConsumed: () => void;
+  /** True when a curator is signed in — their captured notes are stored as verified. */
+  isCurator: boolean;
 }
 
 /**
@@ -43,6 +45,7 @@ export function ChatDrawer({
   onTalkingChange,
   seedQuestion,
   onSeedConsumed,
+  isCurator,
 }: ChatDrawerProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -100,7 +103,10 @@ export function ChatDrawer({
     captureNextRef.current = false;
 
     try {
-      const reply = await sendChat(history, menu, session, { captureNote });
+      const reply = await sendChat(history, menu, session, {
+        captureNote,
+        asCurator: isCurator,
+      });
       setMessages([...history, { role: 'assistant', text: reply }]);
     } catch (err) {
       setError(

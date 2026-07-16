@@ -11,9 +11,14 @@ import {
   type GeoPoint,
 } from '../lib/nearbyCafes';
 
+interface NearbyCafesProps {
+  /** Only signed-in curators may push suggestions to public OpenStreetMap. */
+  isCurator: boolean;
+}
+
 // Collapsed by default so the upload card stays the clear primary action — this is a
 // "while you're here" extra, not the main flow.
-export function NearbyCafes() {
+export function NearbyCafes({ isCurator }: NearbyCafesProps) {
   const [open, setOpen] = useState(false);
   const [city, setCity] = useState('');
   const [busy, setBusy] = useState(false);
@@ -81,10 +86,16 @@ export function NearbyCafes() {
     }
   }
 
-  // Only offer to add a place when the user is physically here (a device fix, not a typed
-  // city) and no lounge is already mapped at this spot — otherwise a suggestion is either
-  // misplaced or a duplicate.
+  // Only offer to add a place when a signed-in curator is physically here (a device fix,
+  // not a typed city) and no lounge is already mapped at this spot — otherwise a
+  // suggestion is either misplaced or a duplicate.
+  //
+  // The curator gate matters most: this writes to the real public map, and an anonymous
+  // button behind a shipped API key is an invitation to spam OpenStreetMap. Public
+  // visitors simply never see this box — no "sign in to unlock" nag for a feature that
+  // was never meant for them.
   const canSuggest =
+    isCurator &&
     results !== null &&
     origin?.source === 'device' &&
     (results.length === 0 || results[0].distanceKm > SUGGEST_NEAR_KM);
