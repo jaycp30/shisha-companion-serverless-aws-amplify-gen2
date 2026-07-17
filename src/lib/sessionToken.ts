@@ -7,8 +7,8 @@ import { getTurnstileToken } from './turnstile';
 // (getUploadUrl, chat) sends this token along.
 //
 // Deliberately memory-only (no localStorage): the token is a credential, and a fresh
-// visit re-challenging invisibly is cheap — same reasoning as the per-pageload
-// SESSION_ID in analyzeMenu.ts.
+// visit re-challenging invisibly is cheap. The token also carries the server-issued
+// session id (see session-token.ts), so a fresh visit is genuinely a fresh session.
 
 // Renew this long before expiry, so a token can't lapse mid-flow (e.g. between the
 // presign and the analysis of a slow multi-page upload).

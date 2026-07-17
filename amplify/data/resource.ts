@@ -1,15 +1,21 @@
 import { type ClientSchema, a, defineData } from '@aws-amplify/backend';
 import { getUploadUrl } from '../functions/get-upload-url/resource';
 import { mintSessionToken } from '../functions/mint-session-token/resource';
-import { analyzeMenu } from '../functions/analyze-menu/resource';
+import { startMenuAnalysis } from '../functions/start-menu-analysis/resource';
+import { getMenuAnalysisStatus } from '../functions/get-menu-analysis-status/resource';
 import { chat } from '../functions/chat/resource';
 
-// `getUploadUrl` and `chat` are custom AppSync operations that just invoke a Lambda.
-// `MenuAnalysis` is a real model (a DynamoDB table): menu analysis is too slow to run
-// inside AppSync's ~30s request ceiling, so it runs as an async job instead — the client
-// creates a PENDING row, a stream-triggered worker fills in the result, and the client
-// subscribes for the flip to DONE. See understanding.md for the full rationale.
-// `publicApiKey` means no login: an API key ships to the frontend.
+// Every op here is a custom AppSync operation backed by a Lambda. `publicApiKey` means
+// no login: an API key ships to the frontend, so it's a routing key, not an auth
+// boundary — the Lambdas enforce the real rules (Turnstile session token, per-session
+// ownership).
+//
+// Menu analysis is too slow for AppSync's ~30s ceiling, so it runs as a background job.
+// The job store is a PLAIN DynamoDB table (see backend.ts + menu-jobs.ts), NOT a data
+// model — Amplify Gen 2 can't make a model function-only, and a public job model is
+// exactly what let anyone list/modify/replay every job. Instead the client calls
+// startMenuAnalysis (which validates page ownership and creates the job) then polls
+// getMenuAnalysisStatus (which returns only that session's own job).
 const schema = a
   .schema({
     // Presign an S3 PUT for the menu photo. `sessionId` (a client-minted UUID) groups
@@ -31,13 +37,15 @@ const schema = a
       .authorization((allow) => [allow.publicApiKey()])
       .handler(a.handler.function(mintSessionToken)),
 
+    // Presign an S3 PUT for one menu page. The upload key is derived ENTIRELY server-side
+    // from the signed session token (menu/<sessionId>/<uuid>.<ext>) — the client no longer
+    // supplies any part of the path, so it can't aim an upload at another session's prefix.
     getUploadUrl: a
       .mutation()
       .arguments({
         contentType: a.string().required(),
-        sessionId: a.string(),
-        // Proof a Turnstile challenge was passed (see mintSessionToken) — verified
-        // in the handler before any presigned URL is issued.
+        // Proof a Turnstile challenge was passed AND which session this is (see
+        // mintSessionToken / session-token.ts). Verified before any URL is signed.
         sessionToken: a.string().required(),
       })
       .returns(
@@ -49,22 +57,40 @@ const schema = a
       .authorization((allow) => [allow.publicApiKey()])
       .handler(a.handler.function(getUploadUrl)),
 
-    // One async menu-analysis job. The client writes status PENDING + the inputs; the
-    // analyze-menu worker (triggered by this table's stream) writes back status DONE +
-    // `result`, or ERROR + `errorMessage`.
-    MenuAnalysis: a
-      .model({
-        status: a.enum(['PENDING', 'DONE', 'ERROR']),
+    // Start a menu-analysis job. Validates that every submitted S3 key belongs to the
+    // caller's signed session, then creates the job row (owner = sessionId) in the
+    // MenuJobs table. Returns only the new job id.
+    startMenuAnalysis: a
+      .mutation()
+      .arguments({
+        sessionToken: a.string().required(),
         // Ordered S3 keys of the uploaded pages (page 1 first).
         s3Keys: a.string().array().required(),
         // Optional free-text context (group size, mood, tolerance…).
         userContext: a.string(),
-        // The MenuResponse JSON once DONE (either the analysis or { error: 'not_a_menu' }).
-        result: a.json(),
-        // A user-safe message when status is ERROR.
-        errorMessage: a.string(),
       })
-      .authorization((allow) => [allow.publicApiKey()]),
+      .returns(a.customType({ jobId: a.string().required() }))
+      .authorization((allow) => [allow.publicApiKey()])
+      .handler(a.handler.function(startMenuAnalysis)),
+
+    // Poll one job's status — and ONLY if the caller's session owns it. A job that
+    // doesn't exist and one owned by another session both return status NOT_FOUND, so
+    // this can't enumerate other sessions' jobs. `result` is the MenuResponse JSON.
+    getMenuAnalysisStatus: a
+      .query()
+      .arguments({
+        sessionToken: a.string().required(),
+        jobId: a.string().required(),
+      })
+      .returns(
+        a.customType({
+          status: a.string().required(),
+          result: a.string(),
+          errorMessage: a.string(),
+        }),
+      )
+      .authorization((allow) => [allow.publicApiKey()])
+      .handler(a.handler.function(getMenuAnalysisStatus)),
 
     // One model-sanitized observation about a venue ("service slows down on weekends").
     // Written ONLY by the chat Lambda — clients can read but never write, which is what
@@ -108,10 +134,11 @@ const schema = a
       .authorization((allow) => [allow.publicApiKey(), allow.authenticated()])
       .handler(a.handler.function(chat)),
   })
-  // Let the Lambdas use the data API: analyze-menu writes job results back, chat reads
-  // and writes café notes. Schema-level grant (not per-model) is how a function gets
-  // data-client access; the handlers use generateClient().
-  .authorization((allow) => [allow.resource(analyzeMenu), allow.resource(chat)]);
+  // Only `chat` uses the data API now (it reads/writes CafeNote via generateClient).
+  // The menu-job Lambdas talk to their plain DynamoDB table with the AWS SDK instead, so
+  // they need no data-API grant here. Schema-level grant is how a function gets
+  // data-client access.
+  .authorization((allow) => [allow.resource(chat)]);
 
 export type Schema = ClientSchema<typeof schema>;
 

@@ -5,24 +5,21 @@ import {
 } from '@aws-sdk/client-bedrock-runtime';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 import type { DynamoDBStreamHandler } from 'aws-lambda';
-import { Amplify } from 'aws-amplify';
-import { generateClient } from 'aws-amplify/data';
-import { getAmplifyDataClientConfig } from '@aws-amplify/backend/function/runtime';
 import { env } from '$amplify/env/analyze-menu';
-import type { Schema } from '../../data/resource';
 import { SYSTEM_PROMPT } from './prompt';
 import { parseMenuAnalysis, type MenuResponse } from './schema';
 import { checkRateLimit } from '../rate-limit';
+import { getMenuJob, finishMenuJob } from '../menu-jobs';
 
 const bedrock = new BedrockRuntimeClient();
 const s3 = new S3Client();
 
-// Cap paid vision analyses per session. Uploads are infrequent (a user scans one
-// menu, maybe a few pages), so 10 per 10 minutes is generous for real use while
-// stopping a runaway or looping client. NOTE: sessionId is client-generated, so a
-// determined attacker can rotate it to bypass this — it is best-effort defense in
-// depth on top of the account's Bedrock budget alarms, which are the real backstop.
-// (The stream worker has no HTTP context, so an IP key is not available here.)
+// Cap paid vision analyses per session. Uploads are infrequent (a user scans one menu,
+// maybe a few pages), so 10 per 10 minutes is generous while stopping a runaway client.
+// The sessionId now comes from the SERVER-signed upload prefix (validated when the job
+// was created), so rotating it means passing Turnstile again for each new session —
+// this is a real per-session cap, not the previously spoofable one. Budget alarms
+// remain the account-level backstop.
 const MENU_RATE_LIMIT = 10;
 const MENU_RATE_WINDOW_SECONDS = 600;
 
@@ -31,12 +28,6 @@ const MENU_RATE_WINDOW_SECONDS = 600;
 function sessionIdFromKey(s3Key: string | undefined): string {
   return s3Key?.split('/')[1] || 'unknown';
 }
-
-// Data client, so the worker can write results back onto the job row. Configured from
-// env values injected by the schema-level `allow.resource(analyzeMenu)` grant.
-const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(env);
-Amplify.configure(resourceConfig, libraryOptions);
-const client = generateClient<Schema>();
 
 // Upper bound on tokens the model may generate for one analysis. Headroom for a
 // multi-page menu's picks, mixes and pairings — the response no longer echoes the whole
@@ -130,19 +121,16 @@ async function analyzePages(
 
 // Process one newly-created job: run the analysis and write the outcome back onto the row.
 // NEVER throws — a thrown error would make the stream retry the record, re-running the
-// (paid) Bedrock call, possibly in a loop. Instead every path resolves the row, so the
-// client's subscription always sees a terminal status.
+// (paid) Bedrock call, possibly in a loop. Instead every path writes a terminal status,
+// so the client's polling always sees an outcome.
 async function processJob(id: string): Promise<void> {
+  const table = process.env.MENU_JOBS_TABLE_NAME ?? '';
   try {
-    const { data: job, errors } = await client.models.MenuAnalysis.get({ id });
-    if (errors || !job) {
-      throw new Error(errors?.[0]?.message ?? `Job ${id} not found.`);
+    const job = await getMenuJob(table, id);
+    if (!job) {
+      throw new Error(`Job ${id} not found.`);
     }
-
-    // ClientSchema types array elements as nullable — drop any holes.
-    const keys = (job.s3Keys ?? []).filter(
-      (key): key is string => typeof key === 'string',
-    );
+    const keys = job.s3Keys;
 
     // Throttle per session before the (paid) vision call. Fail-open by design.
     const { allowed } = await checkRateLimit(
@@ -152,29 +140,16 @@ async function processJob(id: string): Promise<void> {
       MENU_RATE_WINDOW_SECONDS,
     );
     if (!allowed) {
-      const marked = await client.models.MenuAnalysis.update({
-        id,
+      await finishMenuJob(table, id, {
         status: 'ERROR',
-        errorMessage: "You've scanned a lot of menus just now — give it a minute and try again.",
+        errorMessage:
+          "You've scanned a lot of menus just now — give it a minute and try again.",
       });
-      if (marked.errors?.length) {
-        console.error(`Could not mark job ${id} as rate-limited:`, JSON.stringify(marked.errors));
-      }
       return;
     }
 
     const result = await analyzePages(keys, job.userContext);
-
-    // The data client does NOT throw on a failed mutation — it returns errors in-band.
-    // Ignoring them here once left jobs stuck at PENDING forever with clean-looking logs.
-    const updated = await client.models.MenuAnalysis.update({
-      id,
-      status: 'DONE',
-      result: JSON.stringify(result),
-    });
-    if (updated.errors?.length) {
-      throw new Error(`Write-back failed: ${JSON.stringify(updated.errors)}`);
-    }
+    await finishMenuJob(table, id, { status: 'DONE', result: JSON.stringify(result) });
   } catch (error) {
     // A SyntaxError means the MODEL's output was unparseable — that detail belongs in
     // the logs, not in the user's face. Our own thrown Errors are written to be shown.
@@ -185,21 +160,18 @@ async function processJob(id: string): Promise<void> {
           ? error.message
           : 'Menu analysis failed.';
     console.error(`Menu analysis job ${id} failed:`, error);
-    const marked = await client.models.MenuAnalysis.update({
-      id,
-      status: 'ERROR',
-      errorMessage: message,
-    });
-    if (marked.errors?.length) {
+    try {
+      await finishMenuJob(table, id, { status: 'ERROR', errorMessage: message });
+    } catch (writeError) {
       // Nothing left to fall back to — at least leave the truth in the logs.
-      console.error(`Could not mark job ${id} as ERROR:`, JSON.stringify(marked.errors));
+      console.error(`Could not mark job ${id} as ERROR:`, writeError);
     }
   }
 }
 
-// Triggered by the MenuAnalysis table stream. The EventSourceMapping is filtered to
-// INSERT, so we normally only see brand-new jobs; the in-handler guard is belt-and-braces
-// (and stops us reacting to our own DONE/ERROR write-backs, which arrive as MODIFY).
+// Triggered by the MenuJobs table stream. The EventSourceMapping is filtered to INSERT,
+// so we normally only see brand-new jobs; the in-handler guard is belt-and-braces (and
+// stops us reacting to our own DONE/ERROR write-backs, which arrive as MODIFY).
 export const handler: DynamoDBStreamHandler = async (event) => {
   for (const record of event.Records) {
     if (record.eventName !== 'INSERT') continue;

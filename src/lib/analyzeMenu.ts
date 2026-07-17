@@ -5,12 +5,15 @@ import type { MenuResponse } from '../types/menu';
 // Guard rails checked in the browser, before we bother the backend at all.
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
-// A menu can span pages. Keep this in step with MAX_PAGES in the analyze-menu Lambda,
-// which enforces the same cap — this check is only a courtesy to the user.
+// A menu can span pages. Keep this in step with MAX_PAGES in start-menu-analysis, which
+// enforces the same cap server-side — this check is only a courtesy to the user.
 export const MAX_PAGES = 5;
-// How long we wait for a job before giving up — a little past the worker's 120s timeout,
+// How long we poll a job before giving up — a little past the worker's 120s timeout,
 // so a genuinely stuck job fails cleanly rather than hanging the UI.
 const ANALYSIS_TIMEOUT_MS = 130_000;
+// How often we ask the backend whether the job is done. Analysis takes 30-50s, so a
+// 1.5s cadence is responsive without hammering the endpoint.
+const POLL_INTERVAL_MS = 1500;
 
 // Which step of the flow we're on — the component uses this to show status.
 // Presigning is folded into 'uploading': each page presigns and PUTs as one unit, and
@@ -20,10 +23,6 @@ export type Stage = 'uploading' | 'analyzing';
 // Errors we raise deliberately, with a message that is safe to show the user.
 // Anything else that escapes (network drop, etc.) is handled generically by the caller.
 export class MenuUploadError extends Error {}
-
-// One id per page load, so a session's photos group under menu/<sessionId>/ in S3.
-// Deliberately NOT persisted (no localStorage): a fresh visit is a fresh session.
-const SESSION_ID = crypto.randomUUID();
 
 interface AnalyzeOptions {
   userContext?: string;
@@ -41,10 +40,11 @@ export interface AnalyzeOutcome {
 /** Presign, then PUT one page. Returns the S3 key the analyzer should read. */
 async function uploadPage(file: File, sessionToken: string): Promise<string> {
   // 1. Ask the backend to presign an S3 PUT for this content type. The session token
-  //    proves a Turnstile challenge was passed — no token, no presigned URL.
+  //    proves a Turnstile challenge was passed AND identifies the session — the server
+  //    derives the whole key (including the session prefix) from it, so the client no
+  //    longer chooses any part of the path.
   const presign = await client.mutations.getUploadUrl({
     contentType: file.type,
-    sessionId: SESSION_ID,
     sessionToken,
   });
   if (presign.errors?.length || !presign.data) {
@@ -124,21 +124,22 @@ export async function analyzeMenuPages(
   const s3Keys = [...previousKeys, ...newKeys];
 
   // Analysis is too slow for a synchronous request (it blows past AppSync's ~30s
-  // ceiling), so it runs as a background job: create a PENDING row, then wait for a
-  // stream-triggered worker to fill in the result. See understanding.md.
+  // ceiling), so it runs as a background job. startMenuAnalysis validates that these
+  // keys belong to our signed session, then creates the job; we poll for the outcome.
+  // The SAME token is used for upload, start, and poll so the server sees one session.
   onStage?.('analyzing');
-  const created = await client.models.MenuAnalysis.create({
-    status: 'PENDING',
+  const started = await client.mutations.startMenuAnalysis({
+    sessionToken,
     s3Keys,
     userContext,
   });
-  if (created.errors?.length || !created.data) {
+  if (started.errors?.length || !started.data) {
     throw new MenuUploadError(
-      created.errors?.[0]?.message ?? "Couldn't start the analysis.",
+      started.errors?.[0]?.message ?? "Couldn't start the analysis.",
     );
   }
 
-  return { response: await waitForJob(created.data.id), s3Keys };
+  return { response: await pollJob(started.data.jobId, sessionToken), s3Keys };
 }
 
 // A job row's `result` (a.json) round-trips as an object here — but tolerate a stringified
@@ -152,68 +153,43 @@ function extractResult(result: unknown): MenuResponse {
   return parsed as MenuResponse;
 }
 
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
 /**
- * Resolve once the job reaches a terminal status: DONE -> the analysis, ERROR -> throw.
+ * Poll the job until it reaches a terminal status: DONE -> the analysis, ERROR -> throw.
  *
- * Subscribes to updates for this one job, with two safety nets:
- *  - an initial get(), in case the worker finished in the sliver between create and
- *    subscribe (so onUpdate never fires for the transition);
- *  - a timeout just past the worker's own 120s, so a stuck job fails cleanly instead of
- *    spinning forever.
+ * Polling (not a subscription) because the job store is now a private backend table with
+ * no public subscribe surface — getMenuAnalysisStatus returns ONLY this session's own job.
+ * A transient GraphQL error is retried rather than aborting the whole flow; a timeout just
+ * past the worker's 120s stops a genuinely stuck job from spinning forever.
  */
-function waitForJob(jobId: string): Promise<MenuResponse> {
-  return new Promise<MenuResponse>((resolve, reject) => {
-    let settled = false;
-    let sub: { unsubscribe: () => void } | undefined;
+async function pollJob(jobId: string, sessionToken: string): Promise<MenuResponse> {
+  const deadline = Date.now() + ANALYSIS_TIMEOUT_MS;
 
-    const timer = window.setTimeout(() => {
-      finish(() =>
-        reject(
-          new MenuUploadError('The menu reader took too long — please try again.'),
-        ),
-      );
-    }, ANALYSIS_TIMEOUT_MS);
+  while (Date.now() < deadline) {
+    const poll = await client.queries.getMenuAnalysisStatus({ jobId, sessionToken });
 
-    // Run exactly one terminal action, then tear everything down.
-    function finish(action: () => void): void {
-      if (settled) return;
-      settled = true;
-      window.clearTimeout(timer);
-      sub?.unsubscribe();
-      action();
+    if (poll.errors?.length || !poll.data) {
+      // Transient — wait and try again rather than failing the whole analysis.
+      await delay(POLL_INTERVAL_MS);
+      continue;
     }
 
-    function handle(job: { status?: string | null; result?: unknown; errorMessage?: string | null }): void {
-      if (job.status === 'DONE') {
-        try {
-          const result = extractResult(job.result);
-          finish(() => resolve(result));
-        } catch (error) {
-          finish(() => reject(error));
-        }
-      } else if (job.status === 'ERROR') {
-        finish(() =>
-          reject(new MenuUploadError(job.errorMessage ?? "Couldn't read that menu.")),
-        );
-      }
+    const { status, result, errorMessage } = poll.data;
+    if (status === 'DONE') {
+      return extractResult(result);
     }
+    if (status === 'ERROR') {
+      throw new MenuUploadError(errorMessage ?? "Couldn't read that menu.");
+    }
+    if (status === 'NOT_FOUND') {
+      // The job we just created isn't ours to read — should never happen in a normal
+      // flow (same token throughout), so treat it as a hard failure, not a retry.
+      throw new MenuUploadError("That analysis couldn't be found — please try again.");
+    }
+    // PENDING / PROCESSING — keep waiting.
+    await delay(POLL_INTERVAL_MS);
+  }
 
-    sub = client.models.MenuAnalysis.onUpdate({
-      filter: { id: { eq: jobId } },
-    }).subscribe({
-      next: handle,
-      error: () =>
-        finish(() =>
-          reject(new MenuUploadError('Lost connection to the menu reader.')),
-        ),
-    });
-
-    void client.models.MenuAnalysis.get({ id: jobId })
-      .then(({ data }) => {
-        if (data) handle(data);
-      })
-      .catch(() => {
-        /* the subscription is the primary path; ignore a failed pre-check */
-      });
-  });
+  throw new MenuUploadError('The menu reader took too long — please try again.');
 }

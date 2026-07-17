@@ -6,26 +6,31 @@ import { randomUUID } from 'node:crypto';
 // first `ampx sandbox` run is expected — the file is generated at deploy time.
 import { env } from '$amplify/env/get-upload-url';
 import type { Schema } from '../../data/resource';
-import { isValidSessionToken } from '../session-token';
+import { readSessionToken } from '../session-token';
 
 // Only these image types are accepted for a menu upload.
 const ALLOWED_CONTENT_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+// Only these extensions may appear in a key (derived from the content type above).
+const EXTENSION: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+};
 // How long the presigned PUT URL is valid, in seconds.
 const UPLOAD_URL_TTL_SECONDS = 300;
 
 const s3 = new S3Client();
 
-// A session id must look like the UUID the client mints — anything else could be a
-// path-injection attempt (e.g. "../") aimed at signing a key outside menu/.
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 export const handler: Schema['getUploadUrl']['functionHandler'] = async (event) => {
-  const { contentType, sessionId, sessionToken } = event.arguments;
+  const { contentType, sessionToken } = event.arguments;
 
-  // Proof-of-humanness first: no valid session token (see mintSessionToken), no
-  // presigned URL — and therefore no upload to feed the paid vision analysis.
-  // The exact message matters: the frontend detects it to auto-renew and retry.
-  if (!isValidSessionToken(sessionToken, env.SESSION_TOKEN_SECRET)) {
+  // Proof-of-humanness AND session identity in one step: the sessionId comes from the
+  // SIGNED token, never from a client argument. This is what makes menu/<sessionId>/ a
+  // real ownership boundary — a caller cannot choose someone else's prefix. No valid
+  // token, no presigned URL. The exact message matters: the frontend detects it to
+  // auto-renew and retry.
+  const session = readSessionToken(sessionToken, env.SESSION_TOKEN_SECRET);
+  if (!session) {
     throw new Error('Session expired — please try again.');
   }
 
@@ -33,16 +38,10 @@ export const handler: Schema['getUploadUrl']['functionHandler'] = async (event) 
   if (!ALLOWED_CONTENT_TYPES.has(contentType)) {
     throw new Error(`Unsupported content type: ${contentType}`);
   }
-  if (sessionId && !UUID_PATTERN.test(sessionId)) {
-    throw new Error('Invalid session id.');
-  }
 
-  // Random key so uploads never collide, grouped per session when the client sends a
-  // session id. Everything stays under menu/ to match the storage path rule.
-  const extension = contentType.split('/')[1];
-  const s3Key = sessionId
-    ? `menu/${sessionId}/${randomUUID()}.${extension}`
-    : `menu/${randomUUID()}.${extension}`;
+  // Key is fully server-derived: signed sessionId + random object id + a fixed
+  // extension from the (validated) content type. Nothing the client sent shapes the path.
+  const s3Key = `menu/${session.sessionId}/${randomUUID()}.${EXTENSION[contentType]}`;
 
   const uploadUrl = await getSignedUrl(
     s3,

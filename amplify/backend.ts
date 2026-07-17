@@ -1,13 +1,15 @@
 import { defineBackend } from '@aws-amplify/backend';
 import { RemovalPolicy, Stack, Tags } from 'aws-cdk-lib';
-import { Effect, Policy, PolicyStatement } from 'aws-cdk-lib/aws-iam';
+import { Effect, PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { StartingPosition, EventSourceMapping, FilterCriteria, FilterRule } from 'aws-cdk-lib/aws-lambda';
-import { AttributeType, BillingMode, Table } from 'aws-cdk-lib/aws-dynamodb';
+import { AttributeType, BillingMode, StreamViewType, Table } from 'aws-cdk-lib/aws-dynamodb';
 import { auth } from './auth/resource';
 import { data } from './data/resource';
 import { storage } from './storage/resource';
 import { getUploadUrl } from './functions/get-upload-url/resource';
 import { mintSessionToken } from './functions/mint-session-token/resource';
+import { startMenuAnalysis } from './functions/start-menu-analysis/resource';
+import { getMenuAnalysisStatus } from './functions/get-menu-analysis-status/resource';
 import { analyzeMenu } from './functions/analyze-menu/resource';
 import { chat } from './functions/chat/resource';
 import { FOUNDATION_MODEL_ID, MODEL_ID } from './functions/model';
@@ -20,6 +22,8 @@ const backend = defineBackend({
   storage,
   getUploadUrl,
   mintSessionToken,
+  startMenuAnalysis,
+  getMenuAnalysisStatus,
   analyzeMenu,
   chat,
 });
@@ -48,44 +52,46 @@ const bedrockInvokePolicy = new PolicyStatement({
 backend.analyzeMenu.resources.lambda.addToRolePolicy(bedrockInvokePolicy);
 backend.chat.resources.lambda.addToRolePolicy(bedrockInvokePolicy);
 
-// Trigger the analyze-menu worker from the MenuAnalysis table's DynamoDB stream.
-// Amplify enables the stream on model tables by default (it powers subscriptions), so we
-// only attach a mapping. Filtered to INSERT: new jobs trigger a run, but the worker's own
-// DONE/ERROR write-backs (MODIFY events) do not — which is what stops an infinite loop.
-const menuAnalysisTable = backend.data.resources.tables['MenuAnalysis'];
+// --- Menu-analysis job store -------------------------------------------------
+// A plain CDK table, NOT an Amplify data model. Amplify Gen 2 can't make a model
+// function-only (a model always exposes public CRUD to some caller class), and a public
+// job model is precisely what let anyone list/modify/replay every job. As a bare table
+// this is invisible to the GraphQL API — the only ways in are the start/get-status
+// Lambdas, which enforce per-session ownership.
+//
+// stream NEW_IMAGE: newly-created jobs trigger the worker (below). TTL `expiresAt`:
+// jobs self-delete a day after creation (see start-menu-analysis). Lives in the data
+// stack alongside the functions (resourceGroupName 'data') to avoid cross-stack cycles.
+const menuJobsTable = new Table(backend.data.stack, 'MenuJobs', {
+  partitionKey: { name: 'id', type: AttributeType.STRING },
+  billingMode: BillingMode.PAY_PER_REQUEST,
+  timeToLiveAttribute: 'expiresAt',
+  stream: StreamViewType.NEW_IMAGE,
+  removalPolicy: RemovalPolicy.DESTROY,
+});
 
-const streamReadPolicy = new Policy(
-  Stack.of(menuAnalysisTable),
-  'AnalyzeMenuStreamReadPolicy',
-  {
-    statements: [
-      new PolicyStatement({
-        effect: Effect.ALLOW,
-        actions: [
-          'dynamodb:DescribeStream',
-          'dynamodb:GetRecords',
-          'dynamodb:GetShardIterator',
-          'dynamodb:ListStreams',
-        ],
-        resources: [menuAnalysisTable.tableStreamArn!],
-      }),
-    ],
-  },
-);
-backend.analyzeMenu.resources.lambda.role?.attachInlinePolicy(streamReadPolicy);
+// Least privilege per function: start creates jobs, get-status only reads, the worker
+// reads a job and writes its outcome.
+menuJobsTable.grantWriteData(backend.startMenuAnalysis.resources.lambda);
+menuJobsTable.grantReadData(backend.getMenuAnalysisStatus.resources.lambda);
+menuJobsTable.grantReadWriteData(backend.analyzeMenu.resources.lambda);
+for (const fn of [
+  backend.startMenuAnalysis,
+  backend.getMenuAnalysisStatus,
+  backend.analyzeMenu,
+]) {
+  fn.addEnvironment('MENU_JOBS_TABLE_NAME', menuJobsTable.tableName);
+}
 
-const streamMapping = new EventSourceMapping(
-  Stack.of(menuAnalysisTable),
-  'AnalyzeMenuJobStreamMapping',
-  {
-    target: backend.analyzeMenu.resources.lambda,
-    eventSourceArn: menuAnalysisTable.tableStreamArn,
-    startingPosition: StartingPosition.LATEST,
-    // Only wake the worker for freshly-created jobs.
-    filters: [FilterCriteria.filter({ eventName: FilterRule.isEqual('INSERT') })],
-  },
-);
-streamMapping.node.addDependency(streamReadPolicy);
+// Trigger the worker from the job table's stream, filtered to INSERT: new jobs run once,
+// but the worker's own DONE/ERROR write-backs (MODIFY) do not — which stops a loop.
+menuJobsTable.grantStreamRead(backend.analyzeMenu.resources.lambda);
+new EventSourceMapping(Stack.of(menuJobsTable), 'AnalyzeMenuJobStreamMapping', {
+  target: backend.analyzeMenu.resources.lambda,
+  eventSourceArn: menuJobsTable.tableStreamArn,
+  startingPosition: StartingPosition.LATEST,
+  filters: [FilterCriteria.filter({ eventName: FilterRule.isEqual('INSERT') })],
+});
 
 // --- App-level rate limiting for the paid Bedrock paths ----------------------
 // The API is `apiKey` auth with a key baked into the shipped frontend bundle, so
@@ -110,6 +116,20 @@ for (const fn of [backend.chat, backend.analyzeMenu]) {
   rateLimitTable.grantReadWriteData(fn.resources.lambda);
   fn.addEnvironment('RATE_LIMIT_TABLE_NAME', rateLimitTable.tableName);
 }
+
+// Uploaded menu photos are throwaway once analyzed — expire them a day after upload so
+// the bucket doesn't accumulate personal images indefinitely. Matches the job-record TTL.
+// `resources.bucket` is typed IBucket (no addLifecycleRule), so set it on the L1 CfnBucket.
+backend.storage.resources.cfnResources.cfnBucket.lifecycleConfiguration = {
+  rules: [
+    {
+      id: 'expire-menu-uploads',
+      status: 'Enabled',
+      prefix: 'menu/',
+      expirationInDays: 1,
+    },
+  ],
+};
 
 // Cost-allocation / governance tags. Applied at the root stack; the CDK Tag
 // aspect cascades them into every nested stack (data, storage, functions) and
