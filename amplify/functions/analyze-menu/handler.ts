@@ -3,7 +3,7 @@ import {
   ConverseCommand,
   type Message,
 } from '@aws-sdk/client-bedrock-runtime';
-import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, GetObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
 import type { DynamoDBStreamHandler } from 'aws-lambda';
 import { env } from '$amplify/env/analyze-menu';
 import { SYSTEM_PROMPT } from './prompt';
@@ -40,6 +40,50 @@ const TEMPERATURE = 0.4;
 // trusting: every extra page is another image sent to Bedrock — more tokens and money.
 const MAX_PAGES = 5;
 
+// Per-page byte ceiling. Mirrors the presigned-POST content-length-range in
+// get-upload-url, which already enforces it at upload time — re-checking here is defence
+// in depth (the worker never assumes our signed URL was the only writer) and lets us
+// reject an oversized object with a cheap HeadObject BEFORE pulling its bytes into memory.
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+// Ceiling on the COMBINED size of every page in one job. Five 10 MB pages would be 50 MB
+// of image held in Lambda memory and shipped to a paid vision call; real menu photos are
+// far smaller, so this caps the pathological case without blocking a genuine multi-page scan.
+const MAX_TOTAL_IMAGE_BYTES = 25 * 1024 * 1024;
+
+// Cheaply verify every page's size BEFORE downloading any bytes. Rejects a missing object,
+// a single oversized page, or an aggregate that would balloon Lambda memory and the paid
+// vision call. Throws a user-safe error on any violation.
+async function assertPageSizes(keys: string[]): Promise<void> {
+  const heads = await Promise.all(
+    keys.map((key) =>
+      s3
+        .send(
+          new HeadObjectCommand({
+            Bucket: env.SHISHA_MENU_UPLOADS_BUCKET_NAME,
+            Key: key,
+          }),
+        )
+        // A missing object (404) or any Head failure means we can't trust this page —
+        // surface a clean message rather than the raw S3 error.
+        .catch(() => {
+          throw new Error('One of those photos could not be read — please try again.');
+        }),
+    ),
+  );
+
+  let total = 0;
+  for (const head of heads) {
+    const size = head.ContentLength ?? 0;
+    if (size <= 0 || size > MAX_IMAGE_BYTES) {
+      throw new Error('One of those photos is too large — try a smaller image.');
+    }
+    total += size;
+  }
+  if (total > MAX_TOTAL_IMAGE_BYTES) {
+    throw new Error('Those photos are too large together — try fewer or smaller images.');
+  }
+}
+
 // Load the uploaded photo from S3 as raw bytes for the vision call.
 async function loadImageBytes(s3Key: string): Promise<Uint8Array> {
   const object = await s3.send(
@@ -51,11 +95,59 @@ async function loadImageBytes(s3Key: string): Promise<Uint8Array> {
   return object.Body!.transformToByteArray();
 }
 
-// Map the object key's extension to a Bedrock image format.
-function imageFormat(s3Key: string): 'png' | 'jpeg' | 'webp' {
-  if (s3Key.endsWith('.png')) return 'png';
-  if (s3Key.endsWith('.webp')) return 'webp';
-  return 'jpeg';
+// Identify an image from its leading bytes — the actual encoding, not the file extension
+// or the Content-Type the client declared at upload. Either of those can lie, and the
+// format we hand Bedrock must match the real bytes or the vision call fails or misreads.
+// Returns null for anything that isn't a JPEG, PNG, or WebP.
+function sniffImageFormat(bytes: Uint8Array): 'png' | 'jpeg' | 'webp' | null {
+  // JPEG: FF D8 FF
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return 'jpeg';
+  }
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47 &&
+    bytes[4] === 0x0d &&
+    bytes[5] === 0x0a &&
+    bytes[6] === 0x1a &&
+    bytes[7] === 0x0a
+  ) {
+    return 'png';
+  }
+  // WebP: "RIFF" (bytes 0-3) then "WEBP" (bytes 8-11)
+  if (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 &&
+    bytes[1] === 0x49 &&
+    bytes[2] === 0x46 &&
+    bytes[3] === 0x46 &&
+    bytes[8] === 0x57 &&
+    bytes[9] === 0x45 &&
+    bytes[10] === 0x42 &&
+    bytes[11] === 0x50
+  ) {
+    return 'webp';
+  }
+  return null;
+}
+
+// Download one page and confirm its bytes really are a supported image, deriving the
+// Bedrock format from the content itself.
+async function loadPage(
+  s3Key: string,
+): Promise<{ format: 'png' | 'jpeg' | 'webp'; bytes: Uint8Array }> {
+  const bytes = await loadImageBytes(s3Key);
+  const format = sniffImageFormat(bytes);
+  if (!format) {
+    throw new Error(
+      'One of those files is not a readable image — try a JPEG, PNG, or WebP photo.',
+    );
+  }
+  return { format, bytes };
 }
 
 // The actual work: read every page and ask Claude for structured recommendations.
@@ -71,14 +163,14 @@ async function analyzePages(
     throw new Error(`Too many pages: ${keys.length} (max ${MAX_PAGES}).`);
   }
 
+  // Size-gate on a cheap HeadObject before pulling a single byte, so an oversized or
+  // missing object is rejected without loading it (or paying Bedrock to look at it).
+  await assertPageSizes(keys);
+
   // Fetch the pages concurrently — they are independent S3 reads, and doing them in
-  // series would add a round trip per page to a call that is already slow.
-  const pages = await Promise.all(
-    keys.map(async (key) => ({
-      format: imageFormat(key),
-      bytes: await loadImageBytes(key),
-    })),
-  );
+  // series would add a round trip per page to a call that is already slow. loadPage also
+  // sniffs the real image type, so `format` reflects the bytes, not a spoofable extension.
+  const pages = await Promise.all(keys.map(loadPage));
 
   // ONE call carrying every page, in order. The model must see the whole menu at once:
   // a drink listed on the last page can only be paired with a flavour on the first if

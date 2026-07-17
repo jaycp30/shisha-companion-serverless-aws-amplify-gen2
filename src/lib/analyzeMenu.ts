@@ -37,12 +37,13 @@ export interface AnalyzeOutcome {
   s3Keys: string[];
 }
 
-/** Presign, then PUT one page. Returns the S3 key the analyzer should read. */
+/** Presign, then POST one page. Returns the S3 key the analyzer should read. */
 async function uploadPage(file: File, sessionToken: string): Promise<string> {
-  // 1. Ask the backend to presign an S3 PUT for this content type. The session token
+  // 1. Ask the backend to presign an S3 POST for this content type. The session token
   //    proves a Turnstile challenge was passed AND identifies the session — the server
   //    derives the whole key (including the session prefix) from it, so the client no
-  //    longer chooses any part of the path.
+  //    longer chooses any part of the path. The POST policy also pins a size range that
+  //    S3 enforces, so an oversized body is rejected at the edge regardless of the client.
   const presign = await client.mutations.getUploadUrl({
     contentType: file.type,
     sessionToken,
@@ -52,15 +53,21 @@ async function uploadPage(file: File, sessionToken: string): Promise<string> {
       presign.errors?.[0]?.message ?? "Couldn't start the upload.",
     );
   }
-  const { uploadUrl, s3Key } = presign.data;
+  const { uploadUrl, formFields, s3Key } = presign.data;
 
-  // 2. Send the bytes straight to S3. Content-Type MUST match what we signed with,
-  //    or S3 rejects the request with a 403.
-  const upload = await fetch(uploadUrl, {
-    method: 'PUT',
-    headers: { 'Content-Type': file.type },
-    body: file,
-  });
+  // 2. Build the multipart form: every policy field the server signed, then the file
+  //    LAST — S3 ignores anything after the `file` part, so it must come at the end.
+  const form = new FormData();
+  const fields = JSON.parse(formFields) as Record<string, string>;
+  for (const [name, value] of Object.entries(fields)) {
+    form.append(name, value);
+  }
+  form.append('file', file);
+
+  // 3. POST straight to S3. Do NOT set Content-Type ourselves — the browser sets the
+  //    multipart boundary. S3 returns 4xx if the body violates the signed policy (wrong
+  //    size, wrong type), which we surface as a clean upload error.
+  const upload = await fetch(uploadUrl, { method: 'POST', body: form });
   if (!upload.ok) {
     throw new MenuUploadError(`Upload failed (HTTP ${upload.status}).`);
   }
@@ -71,7 +78,7 @@ async function uploadPage(file: File, sessionToken: string): Promise<string> {
 /**
  * Upload the pages of one menu and get flavor recommendations back.
  *
- * The image bytes go BROWSER -> S3 directly via a presigned PUT; they never pass
+ * The image bytes go BROWSER -> S3 directly via a presigned POST; they never pass
  * through a Lambda (which caps request payloads at 6 MB). Only the object keys are
  * sent to analyzeMenu, which reads every page in a SINGLE vision call so the model
  * can pair across pages.

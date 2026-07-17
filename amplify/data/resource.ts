@@ -37,9 +37,10 @@ const schema = a
       .authorization((allow) => [allow.publicApiKey()])
       .handler(a.handler.function(mintSessionToken)),
 
-    // Presign an S3 PUT for one menu page. The upload key is derived ENTIRELY server-side
+    // Presign an S3 POST for one menu page. The upload key is derived ENTIRELY server-side
     // from the signed session token (menu/<sessionId>/<uuid>.<ext>) — the client no longer
     // supplies any part of the path, so it can't aim an upload at another session's prefix.
+    // POST (not PUT) so the policy can carry a content-length-range S3 enforces server-side.
     getUploadUrl: a
       .mutation()
       .arguments({
@@ -51,6 +52,9 @@ const schema = a
       .returns(
         a.customType({
           uploadUrl: a.string().required(),
+          // The presigned POST policy fields, JSON-serialized. The client echoes these
+          // verbatim as form fields alongside the file (a custom type can't hold a map).
+          formFields: a.string().required(),
           s3Key: a.string().required(),
         }),
       )

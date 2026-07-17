@@ -13,6 +13,7 @@
     "@aws-sdk/client-bedrock-runtime": "^3.1086.0",
     "@aws-sdk/client-dynamodb": "^3.1086.0",
     "@aws-sdk/client-s3": "^3.1086.0",
+    "@aws-sdk/s3-presigned-post": "^3.1086.0",
     "@aws-sdk/s3-request-presigner": "^3.1086.0",
     "@tailwindcss/vite": "^4.3.2",
     "aws-amplify": "^6.18.0",
