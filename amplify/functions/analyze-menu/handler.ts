@@ -9,7 +9,7 @@ import { env } from '$amplify/env/analyze-menu';
 import { SYSTEM_PROMPT } from './prompt';
 import { parseMenuAnalysis, type MenuResponse } from './schema';
 import { checkRateLimit } from '../rate-limit';
-import { getMenuJob, finishMenuJob } from '../menu-jobs';
+import { claimMenuJob, finishMenuJob } from '../menu-jobs';
 
 const bedrock = new BedrockRuntimeClient();
 const s3 = new S3Client();
@@ -126,9 +126,13 @@ async function analyzePages(
 async function processJob(id: string): Promise<void> {
   const table = process.env.MENU_JOBS_TABLE_NAME ?? '';
   try {
-    const job = await getMenuJob(table, id);
+    // Claim the job atomically (PENDING -> PROCESSING) BEFORE any paid work. A duplicate
+    // stream delivery of a job already claimed/terminal gets null here and does nothing,
+    // so the (expensive) Bedrock call runs at most once per job.
+    const job = await claimMenuJob(table, id);
     if (!job) {
-      throw new Error(`Job ${id} not found.`);
+      console.log(`Job ${id} was already claimed or terminal — skipping.`);
+      return;
     }
     const keys = job.s3Keys;
 

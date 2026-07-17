@@ -1,8 +1,11 @@
 import { defineBackend } from '@aws-amplify/backend';
-import { RemovalPolicy, Stack, Tags } from 'aws-cdk-lib';
+import { Duration, RemovalPolicy, Stack, Tags } from 'aws-cdk-lib';
 import { Effect, PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { StartingPosition, EventSourceMapping, FilterCriteria, FilterRule } from 'aws-cdk-lib/aws-lambda';
+import { SqsDlq } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { AttributeType, BillingMode, StreamViewType, Table } from 'aws-cdk-lib/aws-dynamodb';
+import { Queue } from 'aws-cdk-lib/aws-sqs';
+import { ComparisonOperator, TreatMissingData } from 'aws-cdk-lib/aws-cloudwatch';
 import { auth } from './auth/resource';
 import { data } from './data/resource';
 import { storage } from './storage/resource';
@@ -86,12 +89,62 @@ for (const fn of [
 // Trigger the worker from the job table's stream, filtered to INSERT: new jobs run once,
 // but the worker's own DONE/ERROR write-backs (MODIFY) do not — which stops a loop.
 menuJobsTable.grantStreamRead(backend.analyzeMenu.resources.lambda);
+
+// Bounded, monitored retry. DynamoDB stream delivery is at-least-once and a Bedrock call
+// runs 30-50s, so a record can be re-delivered. The in-handler claim already makes
+// reprocessing a no-op (at most one paid call per job), so retries here only cover an
+// infra failure (a Lambda crash before it writes a terminal status). Without these
+// settings the AWS defaults (batchSize 100, retry until the record expires ~24h) would
+// let one poison record block the shard and re-run paid work for hours.
+const menuJobsDlq = new Queue(backend.data.stack, 'MenuJobsDlq', {
+  retentionPeriod: Duration.days(14),
+});
+
 new EventSourceMapping(Stack.of(menuJobsTable), 'AnalyzeMenuJobStreamMapping', {
   target: backend.analyzeMenu.resources.lambda,
   eventSourceArn: menuJobsTable.tableStreamArn,
   startingPosition: StartingPosition.LATEST,
+  // One job per invocation: a single slow job can't drag a batch of others into a timeout.
+  batchSize: 1,
+  // Finite retries + an age cap, then the record is dropped to the DLQ rather than
+  // blocking the shard indefinitely.
+  retryAttempts: 3,
+  maxRecordAge: Duration.minutes(5),
+  onFailure: new SqsDlq(menuJobsDlq),
   filters: [FilterCriteria.filter({ eventName: FilterRule.isEqual('INSERT') })],
 });
+
+// Monitoring. These surface in the CloudWatch console; wiring an SNS notification target
+// is a small follow-up (needs a destination address). A record in the DLQ means a job
+// failed every retry; elevated errors or a high iterator age means the worker is unhealthy
+// or the stream is backing up.
+menuJobsDlq
+  .metricApproximateNumberOfMessagesVisible()
+  .createAlarm(backend.data.stack, 'MenuJobsDlqNotEmpty', {
+    threshold: 1,
+    evaluationPeriods: 1,
+    comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+    treatMissingData: TreatMissingData.NOT_BREACHING,
+    alarmDescription: 'A menu-analysis job exhausted retries and landed in the DLQ.',
+  });
+backend.analyzeMenu.resources.lambda
+  .metricErrors({ period: Duration.minutes(5) })
+  .createAlarm(backend.data.stack, 'AnalyzeMenuErrors', {
+    threshold: 5,
+    evaluationPeriods: 1,
+    comparisonOperator: ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+    treatMissingData: TreatMissingData.NOT_BREACHING,
+    alarmDescription: 'analyze-menu worker is erroring at an elevated rate.',
+  });
+backend.analyzeMenu.resources.lambda
+  .metric('IteratorAge', { statistic: 'Maximum', period: Duration.minutes(5) })
+  .createAlarm(backend.data.stack, 'AnalyzeMenuIteratorAge', {
+    threshold: Duration.minutes(5).toMilliseconds(),
+    evaluationPeriods: 1,
+    comparisonOperator: ComparisonOperator.GREATER_THAN_THRESHOLD,
+    treatMissingData: TreatMissingData.NOT_BREACHING,
+    alarmDescription: 'The menu-jobs stream is falling behind (iterator age high).',
+  });
 
 // --- App-level rate limiting for the paid Bedrock paths ----------------------
 // The API is `apiKey` auth with a key baked into the shipped frontend bundle, so

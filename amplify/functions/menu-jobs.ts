@@ -3,6 +3,7 @@ import {
   PutItemCommand,
   GetItemCommand,
   UpdateItemCommand,
+  ConditionalCheckFailedException,
   type AttributeValue,
 } from '@aws-sdk/client-dynamodb';
 
@@ -67,6 +68,28 @@ export async function createMenuJob(
   );
 }
 
+// Rebuild a MenuJob from raw DynamoDB attributes, or null if the status is unreadable.
+function unmarshalJob(
+  id: string,
+  item: Record<string, AttributeValue>,
+): MenuJob | null {
+  const status = item.status?.S;
+  if (status !== 'PENDING' && status !== 'PROCESSING' && status !== 'DONE' && status !== 'ERROR') {
+    return null;
+  }
+  return {
+    id,
+    owner: item.owner?.S ?? '',
+    status,
+    s3Keys: (item.s3Keys?.L ?? [])
+      .map((v) => v.S)
+      .filter((s): s is string => typeof s === 'string'),
+    userContext: item.userContext?.S,
+    result: item.result?.S,
+    errorMessage: item.errorMessage?.S,
+  };
+}
+
 export async function getMenuJob(
   tableName: string,
   id: string,
@@ -76,23 +99,43 @@ export async function getMenuJob(
     // an eventually-consistent read could miss its own brand-new row and look NOT_FOUND.
     new GetItemCommand({ TableName: tableName, Key: { id: { S: id } }, ConsistentRead: true }),
   );
-  if (!Item) return null;
+  return Item ? unmarshalJob(id, Item) : null;
+}
 
-  const status = Item.status?.S;
-  if (status !== 'PENDING' && status !== 'PROCESSING' && status !== 'DONE' && status !== 'ERROR') {
-    return null;
+/**
+ * Atomically claim a job for processing: flip PENDING -> PROCESSING and return the job,
+ * or return null if the job is already PROCESSING/DONE/ERROR (or gone).
+ *
+ * This is the idempotency guard for the stream worker. DynamoDB stream delivery is
+ * at-least-once, and a Bedrock call can run 30-50s, so the same job may be delivered
+ * twice (e.g. after a timeout). Only the delivery that wins this conditional write does
+ * the paid work; a duplicate delivery sees a non-PENDING status and skips.
+ */
+export async function claimMenuJob(
+  tableName: string,
+  id: string,
+): Promise<MenuJob | null> {
+  try {
+    const { Attributes } = await dynamo.send(
+      new UpdateItemCommand({
+        TableName: tableName,
+        Key: { id: { S: id } },
+        UpdateExpression: 'SET #status = :processing',
+        ConditionExpression: '#status = :pending',
+        ExpressionAttributeNames: { '#status': 'status' },
+        ExpressionAttributeValues: {
+          ':processing': { S: 'PROCESSING' },
+          ':pending': { S: 'PENDING' },
+        },
+        ReturnValues: 'ALL_NEW',
+      }),
+    );
+    return Attributes ? unmarshalJob(id, Attributes) : null;
+  } catch (error) {
+    // The job wasn't PENDING — already claimed by another delivery, or already terminal.
+    if (error instanceof ConditionalCheckFailedException) return null;
+    throw error;
   }
-  return {
-    id,
-    owner: Item.owner?.S ?? '',
-    status,
-    s3Keys: (Item.s3Keys?.L ?? [])
-      .map((v) => v.S)
-      .filter((s): s is string => typeof s === 'string'),
-    userContext: Item.userContext?.S,
-    result: Item.result?.S,
-    errorMessage: Item.errorMessage?.S,
-  };
 }
 
 interface TerminalUpdate {
