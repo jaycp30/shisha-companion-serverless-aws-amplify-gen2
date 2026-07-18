@@ -11,6 +11,7 @@
 # CSP allowlist is derived from a real origin audit (2026-07-18):
 #   script/frame  challenges.cloudflare.com  — Turnstile widget + its iframe
 #   connect       *.appsync-api / *.appsync-realtime-api  — GraphQL (+ any realtime socket)
+#                 cognito-idp / cognito-identity  — curator sign-in (Amplify Auth / Cognito)
 #                 *.s3.ap-northeast-1  — presigned upload POST + audio/video preload fetch
 #                 overpass-api.de / nominatim / api.openstreetmap.org  — nearby-lounge search
 #                 challenges.cloudflare.com  — Turnstile telemetry
@@ -41,6 +42,8 @@ customHeaders:
           font-src 'self' data:;
           connect-src 'self' https://*.appsync-api.ap-northeast-1.amazonaws.com
           wss://*.appsync-realtime-api.ap-northeast-1.amazonaws.com
+          https://cognito-idp.ap-northeast-1.amazonaws.com
+          https://cognito-identity.ap-northeast-1.amazonaws.com
           https://*.s3.ap-northeast-1.amazonaws.com https://challenges.cloudflare.com
           https://overpass-api.de https://nominatim.openstreetmap.org
           https://api.openstreetmap.org;
