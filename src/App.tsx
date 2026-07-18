@@ -304,6 +304,7 @@ function App() {
         collapsed={hudCollapsed}
         onToggle={() => setHudCollapsed((collapsed) => !collapsed)}
         onEndSession={handleEndSession}
+        chatOpen={chatOpen}
       />
 
       <ChatDrawer

@@ -33,10 +33,15 @@ export function MascotDock({
   onDismissNotice,
   onOpenChat,
 }: MascotDockProps) {
+    // Narrower on phones (w-32) so it clears the session HUD in the opposite corner;
+    // full size from sm up. Respects the safe-area (notch / home indicator). On small
+    // screens the chat is a bottom sheet that covers this corner, so the whole dock hides
+    // while chatting rather than sitting behind the sheet; on lg+ the chat is a side
+    // panel and the dock slides left to stay visible beside it.
   return (
     <div
-      className={`fixed bottom-3 right-3 z-30 flex w-40 flex-col items-center gap-2 transition-transform duration-300 sm:w-56 ${
-        chatOpen ? 'lg:-translate-x-[25rem]' : ''
+      className={`fixed z-30 flex w-32 flex-col items-center gap-2 transition-transform duration-300 sm:w-56 bottom-[max(0.75rem,env(safe-area-inset-bottom))] right-[max(0.75rem,env(safe-area-inset-right))] ${
+        chatOpen ? 'max-lg:hidden lg:-translate-x-[25rem]' : ''
       }`}
     >
       <MascotBubble notice={notice} onDismiss={onDismissNotice} />
@@ -49,7 +54,9 @@ export function MascotDock({
           onClick={onOpenChat}
           className="w-full rounded-full border border-petal bg-cream/95 px-3 py-2 text-xs font-medium text-espresso backdrop-blur-sm transition hover:bg-petal-soft"
         >
-          Chat with the cat 🐾
+          {/* Short label on phones where the dock is only w-32; full invitation from sm up. */}
+          <span className="sm:hidden">Chat 🐾</span>
+          <span className="hidden sm:inline">Chat with the cat 🐾</span>
         </button>
       )}
     </div>

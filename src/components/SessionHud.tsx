@@ -8,6 +8,23 @@ interface SessionHudProps {
   onToggle: () => void;
   /** Waves the cat goodbye and returns to the splash. */
   onEndSession: () => void;
+  /** True while the chat is open. On small screens the chat is a bottom sheet that
+      covers this corner, so the HUD hides rather than sitting uselessly behind it. */
+  chatOpen: boolean;
+}
+
+// Shared anchor for every HUD variant. Pinned bottom-left, respecting the device
+// safe-area (notch / home indicator) via env() with a sensible floor. Hidden on small
+// screens while the chat sheet is open — it would only sit behind the sheet. `max-w`
+// reserves a clear gutter for the mascot in the opposite corner so the two fixed
+// controls can never intersect at narrow widths (the collision this fixes).
+function anchorClasses(chatOpen: boolean, widthCapped: boolean): string {
+  return [
+    'fixed z-30',
+    'bottom-[max(1rem,env(safe-area-inset-bottom))] left-[max(1rem,env(safe-area-inset-left))]',
+    widthCapped ? 'max-w-[calc(100vw-10rem)]' : '',
+    chatOpen ? 'max-lg:hidden' : '',
+  ].join(' ');
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
@@ -21,15 +38,35 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function SessionHud({ session, collapsed, onToggle, onEndSession }: SessionHudProps) {
+export function SessionHud({
+  session,
+  collapsed,
+  onToggle,
+  onEndSession,
+  chatOpen,
+}: SessionHudProps) {
   const { started, elapsedSeconds, coalsSeconds, coalsExpired, recentPuffs } = session;
 
   // Before the coals are lit there is no session to report on — just an invitation to
   // start one. Showing 0:00 clocks would imply time is being tracked when it isn't.
+  // Collapsed (e.g. chat is open), this shrinks to a single pill instead of a full card
+  // so it doesn't loom in the corner — the same courtesy the started HUD already gave.
   if (!started) {
+    if (collapsed) {
+      return (
+        <button
+          type="button"
+          onClick={session.lightCoals}
+          aria-label="Light the coals to start a session"
+          className={`${anchorClasses(chatOpen, false)} rounded-full bg-petal px-4 py-2 text-xs font-medium text-espresso backdrop-blur-sm transition hover:brightness-95`}
+        >
+          Light the coals 🔥
+        </button>
+      );
+    }
     return (
       <aside
-        className="fixed bottom-4 left-4 z-30 w-56 rounded-2xl border border-petal bg-cream/95 p-4 backdrop-blur-sm"
+        className={`${anchorClasses(chatOpen, true)} w-56 rounded-2xl border border-petal bg-cream/95 p-4 backdrop-blur-sm`}
         aria-label="Session status"
       >
         <p className="text-[10px] font-medium uppercase tracking-widest text-espresso-soft">
@@ -58,14 +95,17 @@ export function SessionHud({ session, collapsed, onToggle, onEndSession }: Sessi
         onClick={onToggle}
         aria-expanded={false}
         aria-label="Expand session status"
-        className={`fixed bottom-4 left-4 z-30 flex items-center gap-3 rounded-full border border-petal px-4 py-2 text-xs backdrop-blur-sm transition hover:bg-petal-soft ${
+        className={`${anchorClasses(chatOpen, true)} flex items-center gap-2 rounded-full border border-petal px-3 py-2 text-xs backdrop-blur-sm transition hover:bg-petal-soft sm:gap-3 sm:px-4 ${
           coalsExpired ? 'bg-petal' : 'bg-cream/95'
         }`}
       >
-        <span className="text-espresso-soft">session</span>
+        {/* Labels drop away below sm so the pill stays narrow enough to clear the mascot
+            in the opposite corner; the clocks alone read fine on a minimised widget, and
+            the aria-label already names it for assistive tech. */}
+        <span className="hidden text-espresso-soft sm:inline">session</span>
         <span className="font-semibold tabular-nums">{formatClock(elapsedSeconds)}</span>
-        <span className="text-petal">|</span>
-        <span className="text-espresso-soft">coals</span>
+        <span className="text-petal">·</span>
+        <span className="hidden text-espresso-soft sm:inline">coals</span>
         <span className="font-semibold tabular-nums">{formatClock(coalsSeconds)}</span>
         <span aria-hidden="true" className="text-espresso-soft">
           ⌃
@@ -76,7 +116,7 @@ export function SessionHud({ session, collapsed, onToggle, onEndSession }: Sessi
 
   return (
     <aside
-      className="fixed bottom-4 left-4 z-30 w-56 rounded-2xl border border-petal bg-cream/95 p-4 backdrop-blur-sm"
+      className={`${anchorClasses(chatOpen, true)} w-56 rounded-2xl border border-petal bg-cream/95 p-4 backdrop-blur-sm`}
       aria-label="Session status"
     >
       <div className="flex items-start justify-between">
