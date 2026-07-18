@@ -1,0 +1,52 @@
+# Amplify Hosting custom response headers. Applied by the CDN to every hosted response
+# (this file only takes effect on a deployed Amplify branch — it is NOT exercised by the
+# local dev server or the backend sandbox). Verify on the live domain with `curl -I`.
+#
+# The five headers below are safe to ENFORCE outright — they harden without risking the
+# app. The Content-Security-Policy ships REPORT-ONLY first: the browser reports violations
+# (console) but blocks nothing, so a missed origin can't take the site down. Once the prod
+# console is quiet, flip `-Report-Only` to `Content-Security-Policy` to enforce.
+#
+# CSP allowlist is derived from a real origin audit (2026-07-18):
+#   script/frame  challenges.cloudflare.com  — Turnstile widget + its iframe
+#   connect       *.appsync-api / *.appsync-realtime-api  — GraphQL (+ any realtime socket)
+#                 *.s3.ap-northeast-1  — presigned upload POST + audio/video preload fetch
+#                 overpass-api.de / nominatim / api.openstreetmap.org  — nearby-lounge search
+#                 challenges.cloudflare.com  — Turnstile telemetry
+#   media/img     *.s3.ap-northeast-1  — mascot video + background video + BGM (assets bucket)
+#   style         'unsafe-inline'  — Motion sets inline style attrs; Turnstile injects styles
+# No inline scripts (Vite emits an external module) and no external fonts, so script-src and
+# font-src stay tight ('self').
+customHeaders:
+  - pattern: '**'
+    headers:
+      - key: 'Strict-Transport-Security'
+        value: 'max-age=31536000; includeSubDomains'
+      - key: 'X-Content-Type-Options'
+        value: 'nosniff'
+      - key: 'X-Frame-Options'
+        value: 'DENY'
+      - key: 'Referrer-Policy'
+        value: 'strict-origin-when-cross-origin'
+      - key: 'Permissions-Policy'
+        value: 'geolocation=(self), camera=(), microphone=(), payment=(), usb=()'
+      - key: 'Content-Security-Policy-Report-Only'
+        value: >-
+          default-src 'self';
+          script-src 'self' https://challenges.cloudflare.com;
+          style-src 'self' 'unsafe-inline';
+          img-src 'self' data: https://*.s3.ap-northeast-1.amazonaws.com;
+          media-src 'self' https://*.s3.ap-northeast-1.amazonaws.com;
+          font-src 'self' data:;
+          connect-src 'self' https://*.appsync-api.ap-northeast-1.amazonaws.com
+          wss://*.appsync-realtime-api.ap-northeast-1.amazonaws.com
+          https://*.s3.ap-northeast-1.amazonaws.com https://challenges.cloudflare.com
+          https://overpass-api.de https://nominatim.openstreetmap.org
+          https://api.openstreetmap.org;
+          frame-src https://challenges.cloudflare.com;
+          worker-src 'self' blob:;
+          object-src 'none';
+          base-uri 'self';
+          form-action 'self';
+          frame-ancestors 'none';
+          upgrade-insecure-requests
