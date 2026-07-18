@@ -228,7 +228,8 @@ async function processJob(id: string): Promise<void> {
     }
     const keys = job.s3Keys;
 
-    // Throttle per session before the (paid) vision call. Fail-open by design.
+    // Throttle per session before the (paid) vision call. Fail-CLOSED (see helper): if
+    // the limiter can't run, deny rather than risk an ungated paid call.
     const { allowed } = await checkRateLimit(
       'menu',
       sessionIdFromKey(keys[0]),

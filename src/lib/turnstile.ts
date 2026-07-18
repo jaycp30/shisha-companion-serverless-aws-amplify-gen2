@@ -20,6 +20,10 @@ interface TurnstileApi {
     container: HTMLElement,
     params: {
       sitekey: string;
+      // Binds the challenge to a named action; the backend verifies it matches (see
+      // turnstile.ts / mint-session-token), so a token solved for one flow can't be
+      // replayed against another.
+      action?: string;
       appearance?: 'always' | 'execute' | 'interaction-only';
       callback?: (token: string) => void;
       'error-callback'?: () => boolean | void;
@@ -100,6 +104,8 @@ export async function getTurnstileToken(): Promise<string> {
 
     widgetId = turnstile.render(container, {
       sitekey: SITE_KEY,
+      // Names this challenge so the backend can bind the token to the mint flow.
+      action: 'mint',
       // Only show UI when interaction is actually required.
       appearance: 'interaction-only',
       callback: (token) => finish(() => resolve(token)),

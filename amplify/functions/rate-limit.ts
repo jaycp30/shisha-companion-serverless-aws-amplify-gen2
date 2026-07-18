@@ -11,17 +11,24 @@ import {
 
 const dynamo = new DynamoDBClient();
 
+// Why a request was (dis)allowed, so callers can log truthfully and message the user
+// appropriately — 'unavailable' is a system fault, not the user hitting their cap.
+export type RateLimitReason = 'ok' | 'over_limit' | 'unavailable';
+
 export interface RateLimitResult {
   allowed: boolean;
   // Requests seen in the current window for this key (including this one).
   count: number;
+  reason: RateLimitReason;
 }
 
 /**
  * Atomically count this request against a fixed window and report whether it is
- * within `limit`. Fail-open: if the check itself errors (throttling, missing
- * table, etc.) we allow the request rather than block a real user over an infra
- * hiccup — the point is to cap abuse, not to gate every call behind DynamoDB.
+ * within `limit`. Fail-CLOSED: this limiter's whole job is to cap paid Bedrock spend,
+ * so if the check itself can't run (throttling, missing table, outage) we DENY rather
+ * than let calls through ungated at exactly the moment abuse could spike. A DynamoDB
+ * blip briefly blocks paid calls — the conservative trade for a spend guard. The
+ * `reason` lets the caller tell "you hit your limit" apart from "system unavailable".
  *
  * @param scope   Namespaces the counter, e.g. 'chat' or 'menu'.
  * @param key     Per-caller identity, e.g. a client IP or session id.
@@ -36,9 +43,10 @@ export async function checkRateLimit(
 ): Promise<RateLimitResult> {
   const tableName = process.env.RATE_LIMIT_TABLE_NAME;
   if (!tableName) {
-    // Not wired up — don't hard-fail the request path over a config gap.
-    console.error('RATE_LIMIT_TABLE_NAME is not set; skipping rate limit.');
-    return { allowed: true, count: 0 };
+    // A deploy-time misconfiguration, not a runtime blip — fail closed and loudly so it
+    // is caught immediately rather than silently disabling every rate limit in prod.
+    console.error('RATE_LIMIT_TABLE_NAME is not set; denying (fail closed).');
+    return { allowed: false, count: 0, reason: 'unavailable' };
   }
 
   const nowSeconds = Math.floor(Date.now() / 1000);
@@ -65,9 +73,11 @@ export async function checkRateLimit(
       }),
     );
     const count = Number(result.Attributes?.reqCount?.N ?? '1');
-    return { allowed: count <= limit, count };
+    const allowed = count <= limit;
+    return { allowed, count, reason: allowed ? 'ok' : 'over_limit' };
   } catch (error) {
-    console.error('Rate limit check failed (allowing request):', error);
-    return { allowed: true, count: 0 };
+    // Can't run the check — deny (fail closed) to protect Bedrock spend.
+    console.error('Rate limit check failed (denying, fail closed):', error);
+    return { allowed: false, count: 0, reason: 'unavailable' };
   }
 }

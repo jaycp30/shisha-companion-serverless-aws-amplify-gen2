@@ -164,11 +164,22 @@ const rateLimitTable = new Table(backend.data.stack, 'RateLimit', {
   removalPolicy: RemovalPolicy.DESTROY,
 });
 
-// Both Bedrock-spending functions read+write the counters and need the table name.
-for (const fn of [backend.chat, backend.analyzeMenu]) {
+// Both Bedrock-spending functions use the counters; mint-session-token also uses the
+// SAME table to enforce a global budget on degraded (Turnstile-unavailable) mints.
+for (const fn of [backend.chat, backend.analyzeMenu, backend.mintSessionToken]) {
   rateLimitTable.grantReadWriteData(fn.resources.lambda);
   fn.addEnvironment('RATE_LIMIT_TABLE_NAME', rateLimitTable.tableName);
 }
+
+// Hostname a genuine Turnstile challenge must have been solved on (public domain, not a
+// secret). Injected here rather than in the function's resource.ts because that file is
+// pulled into the frontend tsconfig graph and must stay free of `process`. Set it in the
+// Amplify Console branch env for prod (TURNSTILE_EXPECTED_HOSTNAME=shisha.jaycloud.net);
+// blank in sandbox skips the hostname + action checks so the Cloudflare test keys verify.
+backend.mintSessionToken.addEnvironment(
+  'TURNSTILE_EXPECTED_HOSTNAME',
+  process.env.TURNSTILE_EXPECTED_HOSTNAME ?? '',
+);
 
 // Uploaded menu photos are throwaway once analyzed — expire them a day after upload so
 // the bucket doesn't accumulate personal images indefinitely. Matches the job-record TTL.

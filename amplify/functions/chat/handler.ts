@@ -170,7 +170,8 @@ export const handler: Schema['chat']['functionHandler'] = async (event) => {
     throw new Error('Session expired — please try again.');
   }
 
-  // Throttle before spending anything on Bedrock. Fail-open by design (see helper).
+  // Throttle before spending anything on Bedrock. Fail-CLOSED (see helper): a limiter
+  // outage denies rather than let paid calls through ungated.
   const ip = clientIp(event.request.headers);
   const { allowed } = await checkRateLimit(
     'chat',
