@@ -32,6 +32,16 @@ customHeaders:
         value: 'strict-origin-when-cross-origin'
       - key: 'Permissions-Policy'
         value: 'geolocation=(self), camera=(), microphone=(), payment=(), usb=()'
+      # Explicitly DISABLE the legacy XSS auditor. `0` is the correct modern value — the
+      # auditor was itself a source of vulnerabilities and has been removed from current
+      # browsers; a non-zero value could reintroduce that risk. CSP is the real XSS defence.
+      - key: 'X-XSS-Protection'
+        value: '0'
+      # Isolate our browsing context from any window we open, while still allowing popups
+      # (`-allow-popups`) so Turnstile's challenge popup keeps working. Full `same-origin`
+      # would sever the opener link Turnstile relies on.
+      - key: 'Cross-Origin-Opener-Policy'
+        value: 'same-origin-allow-popups'
       - key: 'Content-Security-Policy'
         value: >-
           default-src 'self';
