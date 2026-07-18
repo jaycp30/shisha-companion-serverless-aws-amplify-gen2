@@ -1,9 +1,11 @@
 # Dependabot keeps dependencies current so the app doesn't drift into stale, advisory-laden
 # versions again (the reason aws-cdk-lib sat below its published fix). GitHub-native — no CI
 # runner involved. Amplify's build toolchain pins many transitives, so updates are GROUPED
-# to keep review light: one PR for all non-major bumps, and majors on their own for careful
-# review (a major Amplify/CDK bump can trip this repo's known lockfile sensitivity — always
-# confirm `npm ci` passes on a Dependabot PR before merging).
+# to keep review light: one PR for all non-major bumps. Major versions are IGNORED entirely
+# (zod 4 / TS 7-class jumps are deliberate migration tasks, not click-merges, and a major
+# Amplify/CDK bump can trip this repo's known lockfile sensitivity). Security advisories
+# still surface regardless of the ignore rule. Always confirm `npm ci` passes on a
+# Dependabot PR before merging.
 version: 2
 updates:
   - package-ecosystem: "npm"
@@ -16,3 +18,6 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
