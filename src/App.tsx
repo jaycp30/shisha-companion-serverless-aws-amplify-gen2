@@ -64,6 +64,17 @@ function App() {
     setHudCollapsed(chatOpen);
   }, [chatOpen]);
 
+  // Restore focus to the chat trigger when the drawer closes. The trigger unmounts while
+  // the chat is open (see MascotDock), so we can't hold a node ref across the close —
+  // instead we refocus it by id once it has remounted. Skips the initial mount.
+  const wasChatOpen = useRef(false);
+  useEffect(() => {
+    if (wasChatOpen.current && !chatOpen) {
+      document.getElementById('chat-trigger')?.focus();
+    }
+    wasChatOpen.current = chatOpen;
+  }, [chatOpen]);
+
   // Transient clips that play once then get out of the way. `greeting` is set when the
   // session actually STARTS, not on mount — otherwise its 5s timer would run out while
   // you were still sitting on the splash screen, and the cat would never wave.
@@ -229,15 +240,17 @@ function App() {
           aria-pressed={zenMode}
           aria-label={zenMode ? 'Leave zen mode' : 'Enter zen mode (hide the cards)'}
           onClick={() => setZenMode((zen) => !zen)}
-          className="control-halo shrink-0 text-xs tracking-wide text-espresso/70 transition hover:text-espresso"
+          className="control-halo inline-flex min-h-6 shrink-0 items-center px-1 text-xs tracking-wide text-espresso/70 transition hover:text-espresso"
         >
           {zenMode ? 'Zen off' : 'Zen'}
         </button>
 
         {/* Fades with zen mode — a login form has no place in a "just watch the room"
-            view. The zen toggle itself must stay: it's the way back out. */}
+            view. `inert` (not just aria-hidden) so it drops out of the tab order too —
+            aria-hidden alone leaves the hidden controls keyboard-focusable. The zen toggle
+            itself stays outside this wrapper: it's the way back out. */}
         <div
-          aria-hidden={zenMode}
+          inert={zenMode || undefined}
           className={`shrink-0 transition-opacity duration-500 ${
             zenMode ? 'pointer-events-none opacity-0' : 'opacity-100'
           }`}
@@ -250,7 +263,7 @@ function App() {
           narrows rather than hiding behind the panel — so you can keep reading and
           scrolling your recommendations while you talk to the cat. */}
       <div
-        aria-hidden={zenMode}
+        inert={zenMode || undefined}
         className={`px-6 py-16 transition-all duration-500 ${
           chatOpen ? 'mx-auto max-w-3xl lg:mx-0 lg:ml-16 lg:max-w-2xl' : 'mx-auto max-w-3xl'
         } ${zenMode ? 'pointer-events-none opacity-0' : 'opacity-100'}`}

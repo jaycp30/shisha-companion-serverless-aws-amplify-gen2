@@ -55,8 +55,43 @@ export function ChatDrawer({
 
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const sectionRef = useRef<HTMLElement>(null);
   // True while the next user message is the answer to the cat's café question.
   const captureNextRef = useRef(false);
+
+  // Move focus into the sheet when it opens so a keyboard user lands in the composer
+  // rather than being stranded on <body> behind an invisible modal. Focus is restored to
+  // the chat trigger on close by App (the trigger unmounts while the sheet is open).
+  useEffect(() => {
+    if (open) inputRef.current?.focus();
+  }, [open]);
+
+  // Modal keyboard behaviour: Escape closes, and Tab is trapped inside the sheet so focus
+  // can't wander to the (inert-to-the-eye but still tabbable) page behind it.
+  function handleDialogKeyDown(event: KeyboardEvent<HTMLElement>): void {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      onClose();
+      return;
+    }
+    if (event.key !== 'Tab' || !sectionRef.current) return;
+    const focusable = Array.from(
+      sectionRef.current.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter((el) => el.offsetParent !== null);
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    if (event.shiftKey && active === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
 
   // Plant the cat's proactive question as a normal assistant message the first time the
   // drawer opens while one is pending. The user's reply (their NEXT send) is flagged so
@@ -139,15 +174,19 @@ export function ChatDrawer({
     <AnimatePresence>
       {open && (
         <motion.section
+          ref={sectionRef}
+          onKeyDown={handleDialogKeyDown}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="chat-heading"
           className="fixed inset-x-0 bottom-0 z-40 mx-auto flex max-h-[70dvh] w-full max-w-xl flex-col rounded-t-3xl border border-petal bg-cream/95 backdrop-blur-sm lg:inset-y-0 lg:left-auto lg:right-0 lg:mx-0 lg:h-dvh lg:max-h-none lg:w-[24rem] lg:max-w-none lg:rounded-none lg:rounded-l-3xl"
           initial={reduceMotion ? false : { opacity: 0, y: 24 }}
           animate={{ opacity: 1, y: 0 }}
           exit={reduceMotion ? undefined : { opacity: 0, y: 24 }}
           transition={{ type: 'spring', stiffness: 300, damping: 32 }}
-          aria-label="Chat with the cat"
         >
           <header className="flex items-center justify-between border-b border-petal px-5 py-3">
-            <h2 className="text-sm font-semibold">Chat with the cat 🐾</h2>
+            <h2 id="chat-heading" className="text-sm font-semibold">Chat with the cat 🐾</h2>
             <button
               type="button"
               onClick={onClose}
@@ -211,7 +250,7 @@ export function ChatDrawer({
               rows={1}
               placeholder="Say something… (Shift+Enter for a new line)"
               aria-label="Message"
-              className="min-w-0 flex-1 resize-none overflow-y-auto rounded-2xl border border-petal bg-linen px-4 py-2.5 text-sm leading-relaxed text-espresso outline-none placeholder:text-espresso-soft focus:border-espresso-soft"
+              className="min-w-0 flex-1 resize-none overflow-y-auto rounded-2xl border border-petal bg-linen px-4 py-2.5 text-sm leading-relaxed text-espresso placeholder:text-espresso-soft focus:border-espresso-soft"
             />
             <button
               type="submit"

@@ -97,7 +97,7 @@ export function CuratorPanel({ curator, onChange }: CuratorPanelProps) {
         <button
           type="button"
           onClick={handleSignOut}
-          className="text-espresso/50 underline-offset-2 transition hover:text-espresso hover:underline"
+          className="inline-flex min-h-6 items-center px-1 text-espresso/50 underline-offset-2 transition hover:text-espresso hover:underline"
         >
           Sign out
         </button>
@@ -121,7 +121,7 @@ export function CuratorPanel({ curator, onChange }: CuratorPanelProps) {
           if (open) reset();
           setOpen(!open);
         }}
-        className="control-halo text-xs tracking-wide text-espresso/50 transition hover:text-espresso"
+        className="control-halo inline-flex min-h-6 items-center px-1 text-xs tracking-wide text-espresso/50 transition hover:text-espresso"
       >
         Curator
       </button>
@@ -150,7 +150,7 @@ export function CuratorPanel({ curator, onChange }: CuratorPanelProps) {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
-                className="mb-2 w-full rounded-lg border border-espresso/15 bg-white/70 px-3 py-2 text-espresso outline-none focus:border-espresso/40"
+                className="mb-2 w-full rounded-lg border border-espresso/15 bg-white/70 px-3 py-2 text-espresso focus:border-espresso/40"
               />
               <label className="sr-only" htmlFor="curator-password">
                 Password
@@ -163,7 +163,7 @@ export function CuratorPanel({ curator, onChange }: CuratorPanelProps) {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Password"
-                className="mb-2 w-full rounded-lg border border-espresso/15 bg-white/70 px-3 py-2 text-espresso outline-none focus:border-espresso/40"
+                className="mb-2 w-full rounded-lg border border-espresso/15 bg-white/70 px-3 py-2 text-espresso focus:border-espresso/40"
               />
             </>
           )}
@@ -181,7 +181,7 @@ export function CuratorPanel({ curator, onChange }: CuratorPanelProps) {
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 placeholder="New password"
-                className="mb-2 w-full rounded-lg border border-espresso/15 bg-white/70 px-3 py-2 text-espresso outline-none focus:border-espresso/40"
+                className="mb-2 w-full rounded-lg border border-espresso/15 bg-white/70 px-3 py-2 text-espresso focus:border-espresso/40"
               />
             </>
           )}

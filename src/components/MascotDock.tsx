@@ -51,6 +51,7 @@ export function MascotDock({
       {!chatOpen && (
         <button
           type="button"
+          id="chat-trigger"
           onClick={onOpenChat}
           className="w-full rounded-full border border-petal bg-cream/95 px-3 py-2 text-xs font-medium text-espresso backdrop-blur-sm transition hover:bg-petal-soft"
         >

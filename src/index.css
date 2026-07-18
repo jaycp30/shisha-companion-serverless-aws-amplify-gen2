@@ -38,3 +38,13 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
+
+/* One visible focus indicator for every interactive control. :focus-visible (not :focus)
+   so it shows for keyboard/AT users but never on a plain mouse click. The espresso ink
+   reads against both the cream cards and the background video; the offset keeps it clear
+   of rounded edges. Several controls previously set `outline-none` with only a faint
+   border shift on focus — too subtle to satisfy a visible-focus requirement. */
+:focus-visible {
+  outline: 2px solid var(--color-espresso);
+  outline-offset: 2px;
+}

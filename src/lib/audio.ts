@@ -171,10 +171,21 @@ class AudioManager {
 
     if (previous) {
       previous.fade(previous.volume(), 0, AUDIO_CONFIG.crossfadeMs);
-      previous.once('fade', () => {
+      // Release the previous track after the crossfade. Each bgm Howl is `html5: true`,
+      // so it holds one node from Howler's small HTML5 audio pool (default 10) until it's
+      // unloaded. The old code released it ONLY on Howler's 'fade' event — which doesn't
+      // fire if the fade is cut short by a rapid track/mood switch, leaking a node every
+      // time until the pool exhausts ("HTML5 audio pool exhausted", then playback stalls).
+      // A guaranteed timer plus a run-once guard releases it reliably, exactly once.
+      let released = false;
+      const release = (): void => {
+        if (released) return;
+        released = true;
         previous.stop();
         previous.unload();
-      });
+      };
+      previous.once('fade', release);
+      window.setTimeout(release, AUDIO_CONFIG.crossfadeMs + 100);
     }
   }
 }

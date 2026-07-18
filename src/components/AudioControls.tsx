@@ -85,7 +85,7 @@ export function AudioControls({ audio }: AudioControlsProps) {
           type="button"
           onClick={() => setOpen(true)}
           aria-expanded={false}
-          className="flex items-center gap-1 rounded-full px-1 text-[11px] text-espresso-soft transition hover:text-espresso"
+          className="flex min-h-6 items-center gap-1 rounded-full px-1 text-[11px] text-espresso-soft transition hover:text-espresso"
         >
           <span className="max-w-[9rem] truncate">
             {audio.track?.title ?? 'Music'}
@@ -106,7 +106,7 @@ export function AudioControls({ audio }: AudioControlsProps) {
               type="button"
               onClick={() => audio.setMood(mood)}
               aria-pressed={audio.mood === mood}
-              className={`rounded-full px-2 py-1 text-[11px] font-medium transition ${
+              className={`inline-flex min-h-6 items-center rounded-full px-2 py-1 text-[11px] font-medium transition ${
                 audio.mood === mood
                   ? 'bg-petal text-espresso'
                   : 'text-espresso-soft hover:bg-petal-soft'
@@ -121,7 +121,7 @@ export function AudioControls({ audio }: AudioControlsProps) {
           onClick={() => setOpen(false)}
           aria-expanded
           aria-label="Collapse music controls"
-          className="rounded-full p-1 text-espresso-soft transition hover:bg-petal-soft"
+          className="rounded-full p-1.5 text-espresso-soft transition hover:bg-petal-soft"
         >
           <Icon path={ICONS.chevronUp} />
         </button>
