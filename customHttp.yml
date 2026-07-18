@@ -2,10 +2,11 @@
 # (this file only takes effect on a deployed Amplify branch — it is NOT exercised by the
 # local dev server or the backend sandbox). Verify on the live domain with `curl -I`.
 #
-# The five headers below are safe to ENFORCE outright — they harden without risking the
-# app. The Content-Security-Policy ships REPORT-ONLY first: the browser reports violations
-# (console) but blocks nothing, so a missed origin can't take the site down. Once the prod
-# console is quiet, flip `-Report-Only` to `Content-Security-Policy` to enforce.
+# The Content-Security-Policy is now ENFORCED. It shipped Report-Only first and was proven
+# safe by serving the built app under an enforcing copy of this exact allowlist with zero
+# securitypolicyviolation events (S3, AppSync, Turnstile script+iframe, inline styles all
+# exercised). If a future origin is added to the app, update connect/img/media/etc. below
+# BEFORE it ships, or the browser will block it.
 #
 # CSP allowlist is derived from a real origin audit (2026-07-18):
 #   script/frame  challenges.cloudflare.com  — Turnstile widget + its iframe
@@ -30,7 +31,7 @@ customHeaders:
         value: 'strict-origin-when-cross-origin'
       - key: 'Permissions-Policy'
         value: 'geolocation=(self), camera=(), microphone=(), payment=(), usb=()'
-      - key: 'Content-Security-Policy-Report-Only'
+      - key: 'Content-Security-Policy'
         value: >-
           default-src 'self';
           script-src 'self' https://challenges.cloudflare.com;
