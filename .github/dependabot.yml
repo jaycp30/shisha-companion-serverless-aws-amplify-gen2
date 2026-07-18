@@ -1,0 +1,18 @@
+# Dependabot keeps dependencies current so the app doesn't drift into stale, advisory-laden
+# versions again (the reason aws-cdk-lib sat below its published fix). GitHub-native — no CI
+# runner involved. Amplify's build toolchain pins many transitives, so updates are GROUPED
+# to keep review light: one PR for all non-major bumps, and majors on their own for careful
+# review (a major Amplify/CDK bump can trip this repo's known lockfile sensitivity — always
+# confirm `npm ci` passes on a Dependabot PR before merging).
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
