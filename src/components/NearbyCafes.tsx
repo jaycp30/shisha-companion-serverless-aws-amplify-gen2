@@ -10,6 +10,11 @@ import {
   type Cafe,
   type GeoPoint,
 } from '../lib/nearbyCafes';
+import {
+  searchLoungesOnWeb,
+  LoungeSearchError,
+  type WebLounge,
+} from '../lib/loungeWebSearch';
 
 interface NearbyCafesProps {
   /** Only signed-in curators may push suggestions to public OpenStreetMap. */
@@ -25,6 +30,12 @@ export function NearbyCafes({ isCurator }: NearbyCafesProps) {
   const [error, setError] = useState('');
   const [origin, setOrigin] = useState<GeoPoint | null>(null);
   const [results, setResults] = useState<Cafe[] | null>(null);
+
+  // The paid "search the web" escalation (Claude Platform + hosted web search). Kept
+  // separate from the free OSM state so a web search never disturbs the map results.
+  const [webBusy, setWebBusy] = useState(false);
+  const [webError, setWebError] = useState('');
+  const [webResults, setWebResults] = useState<WebLounge[] | null>(null);
 
   // "Suggest this lounge to OpenStreetMap" flow.
   const [suggestName, setSuggestName] = useState('');
@@ -45,11 +56,18 @@ export function NearbyCafes({ isCurator }: NearbyCafesProps) {
     setSuggestedUrl(null);
   }
 
+  function resetWebSearch(): void {
+    setWebBusy(false);
+    setWebError('');
+    setWebResults(null);
+  }
+
   async function runSearch(getOrigin: () => Promise<GeoPoint>): Promise<void> {
     setBusy(true);
     setError('');
     setResults(null);
     resetSuggest();
+    resetWebSearch();
     try {
       const point = await getOrigin();
       setOrigin(point);
@@ -70,6 +88,24 @@ export function NearbyCafes({ isCurator }: NearbyCafesProps) {
     const query = city.trim();
     if (!query || busy) return;
     void runSearch(() => geocodeCity(query));
+  }
+
+  async function handleWebSearch(): Promise<void> {
+    if (!origin || webBusy) return;
+    setWebBusy(true);
+    setWebError('');
+    setWebResults(null);
+    try {
+      setWebResults(await searchLoungesOnWeb(origin));
+    } catch (err) {
+      setWebError(
+        err instanceof LoungeSearchError
+          ? err.message
+          : 'The web search ran into a problem — try again.',
+      );
+    } finally {
+      setWebBusy(false);
+    }
   }
 
   async function handleSuggest(): Promise<void> {
@@ -161,9 +197,14 @@ export function NearbyCafes({ isCurator }: NearbyCafesProps) {
             </p>
           )}
 
-          {results && !busy && (
+          {/* Gated on `origin`, not `results`: a search that geocoded but whose OSM lounge
+              lookup FAILED (Overpass is a flaky free service) still has an origin — and that
+              is exactly when the web-search fallback matters most. So this block, and the
+              escalation inside it, must survive an OSM error. The OSM list itself is guarded
+              separately below on `results`. */}
+          {origin && !busy && (
             <div className="mt-5">
-              {results.length === 0 ? (
+              {results && (results.length === 0 ? (
                 <p className="text-sm text-espresso-soft">
                   No mapped lounges near {origin?.label} — coverage is community-sourced,
                   so some areas are thin.
@@ -197,6 +238,95 @@ export function NearbyCafes({ isCurator }: NearbyCafesProps) {
                     Data © OpenStreetMap contributors
                   </p>
                 </>
+              ))}
+
+              {/* Paid web-search escalation. Always offered once a search has run:
+                  prominent when the map has nothing to show (empty OR errored), a quiet link
+                  when it returned results (web results can still beat patchy OSM data).
+                  Costs money + ~a minute, so the copy says so and it never fires without an
+                  explicit click. */}
+              {webResults === null && !webBusy && (
+                <div className="mt-4">
+                  {!results || results.length === 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleWebSearch()}
+                      className="rounded-full bg-petal px-5 py-2.5 text-sm font-medium text-espresso transition hover:brightness-95"
+                    >
+                      Nothing on the map — search the web 🔎
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void handleWebSearch()}
+                      className="text-sm text-espresso-soft underline underline-offset-2 transition hover:text-espresso"
+                    >
+                      Not seeing your spot? Search the web →
+                    </button>
+                  )}
+                  <p className="mt-2 text-xs text-espresso-soft">
+                    The cat searches the web with AI — takes about a minute.
+                  </p>
+                </div>
+              )}
+
+              {webBusy && (
+                <p className="mt-4 text-sm text-espresso-soft" role="status">
+                  Searching the web for lounges near {origin?.label}… this takes about a
+                  minute.
+                </p>
+              )}
+
+              {webError && (
+                <p className="mt-4 rounded-xl bg-petal-soft px-4 py-3 text-sm" role="alert">
+                  {webError}
+                </p>
+              )}
+
+              {webResults && !webBusy && (
+                <div className="mt-5">
+                  {webResults.length === 0 ? (
+                    <p className="text-sm text-espresso-soft">
+                      The web didn&apos;t turn up any lounges near {origin?.label} either —
+                      you may be off the beaten path.
+                    </p>
+                  ) : (
+                    <>
+                      <p className="mb-3 text-sm text-espresso-soft">
+                        From the web (AI-assisted — double-check hours before you go):
+                      </p>
+                      <ul className="space-y-2">
+                        {webResults.map((lounge, i) => (
+                          <li
+                            key={`${lounge.name}-${i}`}
+                            className="rounded-xl border border-petal bg-linen px-4 py-3"
+                          >
+                            {lounge.url ? (
+                              <a
+                                href={lounge.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-sm font-medium text-espresso underline-offset-2 hover:underline"
+                              >
+                                {lounge.name}
+                              </a>
+                            ) : (
+                              <span className="text-sm font-medium text-espresso">
+                                {lounge.name}
+                              </span>
+                            )}
+                            <p className="mt-0.5 text-xs text-espresso-soft">
+                              {lounge.address ? `${lounge.area} · ${lounge.address}` : lounge.area}
+                            </p>
+                            {lounge.note && (
+                              <p className="mt-1 text-xs text-espresso-soft">{lounge.note}</p>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                </div>
               )}
 
               {/* Give back to the map you just used — but only when it makes sense, and

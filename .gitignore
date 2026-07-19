@@ -46,3 +46,5 @@ AGENTS.md
 .env
 .env.local
 .env.*.local
+# Local-only feature planning doc
+plan_lounge_websearch.md

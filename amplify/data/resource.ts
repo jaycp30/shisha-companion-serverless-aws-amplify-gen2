@@ -3,6 +3,8 @@ import { getUploadUrl } from '../functions/get-upload-url/resource';
 import { mintSessionToken } from '../functions/mint-session-token/resource';
 import { startMenuAnalysis } from '../functions/start-menu-analysis/resource';
 import { getMenuAnalysisStatus } from '../functions/get-menu-analysis-status/resource';
+import { startLoungeSearch } from '../functions/start-lounge-search/resource';
+import { getLoungeSearchStatus } from '../functions/get-lounge-search-status/resource';
 import { chat } from '../functions/chat/resource';
 
 // Every op here is a custom AppSync operation backed by a Lambda. `publicApiKey` means
@@ -95,6 +97,43 @@ const schema = a
       )
       .authorization((allow) => [allow.publicApiKey()])
       .handler(a.handler.function(getMenuAnalysisStatus)),
+
+    // Start a lounge web-search job — the paid escalation when free OpenStreetMap coverage
+    // is thin. Validates the signed session token, checks a location cache, and (on a miss)
+    // creates a job the stream worker picks up. Runs on Claude Platform on AWS (hosted web
+    // search), NOT Bedrock. Returns only the new/copied job id; the client polls for the
+    // result. `label` is the human place name for display + prompt; lat/lon come from the
+    // OSM flow's already-resolved point (device fix or geocoded city).
+    startLoungeSearch: a
+      .mutation()
+      .arguments({
+        sessionToken: a.string().required(),
+        lat: a.float().required(),
+        lon: a.float().required(),
+        label: a.string(),
+      })
+      .returns(a.customType({ jobId: a.string().required() }))
+      .authorization((allow) => [allow.publicApiKey()])
+      .handler(a.handler.function(startLoungeSearch)),
+
+    // Poll one lounge-search job's status — and ONLY if the caller's session owns it. A job
+    // that doesn't exist and one owned by another session both return NOT_FOUND, so this
+    // can't enumerate other sessions' jobs. `result` is the LoungeList JSON.
+    getLoungeSearchStatus: a
+      .query()
+      .arguments({
+        sessionToken: a.string().required(),
+        jobId: a.string().required(),
+      })
+      .returns(
+        a.customType({
+          status: a.string().required(),
+          result: a.string(),
+          errorMessage: a.string(),
+        }),
+      )
+      .authorization((allow) => [allow.publicApiKey()])
+      .handler(a.handler.function(getLoungeSearchStatus)),
 
     // One model-sanitized observation about a venue ("service slows down on weekends").
     // Written ONLY by the chat Lambda — clients can read but never write, which is what

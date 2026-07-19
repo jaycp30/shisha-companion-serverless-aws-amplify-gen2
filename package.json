@@ -11,6 +11,7 @@
     "audit:prod": "npm audit --omit=dev --audit-level=high"
   },
   "dependencies": {
+    "@anthropic-ai/aws-sdk": "^0.6.0",
     "@aws-sdk/client-bedrock-runtime": "^3.1086.0",
     "@aws-sdk/client-dynamodb": "^3.1086.0",
     "@aws-sdk/client-s3": "^3.1086.0",
