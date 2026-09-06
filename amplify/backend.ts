@@ -264,11 +264,14 @@ backend.loungeSearch.resources.lambda.addToRolePolicy(claudePlatformPolicy);
 backend.loungeSearch.resources.lambda.addToRolePolicy(claudePlatformStsPolicy);
 
 // The Claude Platform workspace to bill/route to — NOT a secret, but a per-environment
-// value: set the Amplify prod branch env var ANTHROPIC_AWS_WORKSPACE_ID (the new "shisha"
-// workspace), and put it in .env.local for the sandbox. Injected here (not in the function's
-// resource.ts) because that file is pulled into the frontend tsconfig graph and must stay
-// free of `process`. Blank means no workspace — the worker will fail its call, which is the
-// correct, loud outcome for a missing config.
+// value. Prod reads the Amplify branch env var ANTHROPIC_AWS_WORKSPACE_ID (set on `main`).
+// For the sandbox, run `npm run sandbox`: ampx does NOT read .env.local (that is a Vite
+// convention and only covers VITE_* in the frontend), so that script exports .env.local
+// into the environment before invoking ampx. Running `npx ampx sandbox` directly leaves
+// this unset and silently synths the over-broad `workspace/*` policy below.
+// Injected here (not in the function's resource.ts) because that file is pulled into the
+// frontend tsconfig graph and must stay free of `process`. Blank means no workspace — the
+// worker will fail its call, which is the correct, loud outcome for a missing config.
 backend.loungeSearch.addEnvironment(
   'ANTHROPIC_AWS_WORKSPACE_ID',
   process.env.ANTHROPIC_AWS_WORKSPACE_ID ?? '',

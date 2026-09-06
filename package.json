@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
+    "sandbox": "set -a && . ./.env.local && set +a && ampx sandbox",
     "audit:prod": "npm audit --omit=dev --audit-level=high"
   },
   "dependencies": {
